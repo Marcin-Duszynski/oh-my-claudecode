@@ -456,10 +456,10 @@ async function processKeywordDetector(input: HookInput): Promise<HookOutput> {
       case "codex":
       case "gemini": {
         messages.push(
-          `[MAGIC KEYWORD: omc-teams]\n` +
-          `User intent: delegate to ${keywordType} CLI workers via omc-teams.\n` +
+          `[MAGIC KEYWORD: team]\n` +
+          `User intent: delegate to ${keywordType} CLI workers via omc team CLI.\n` +
           `Agent type: ${keywordType}. Parse N from user message (default 1).\n` +
-          `Invoke: /omc-teams N:${keywordType} "<task from user message>"`
+          `Invoke: omc team start --agent ${keywordType} --count N --task "<task from user message>"`
         );
         break;
       }

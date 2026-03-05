@@ -28,6 +28,129 @@ import type { OmcTeamJob } from './team-job-convergence.js';
 
 const omcTeamJobs = new Map<string, OmcTeamJob>();
 const OMC_JOBS_DIR = process.env.OMC_JOBS_DIR || join(homedir(), '.omc', 'team-jobs');
+const DEPRECATION_CODE = 'deprecated_cli_only' as const;
+
+type DeprecatedTeamToolName =
+  | 'omc_run_team_start'
+  | 'omc_run_team_status'
+  | 'omc_run_team_wait'
+  | 'omc_run_team_cleanup';
+
+const TEAM_CLI_REPLACEMENT_HINTS: Record<DeprecatedTeamToolName, string> = {
+  omc_run_team_start: 'omc team start',
+  omc_run_team_status: 'omc team status <job_id>',
+  omc_run_team_wait: 'omc team wait <job_id>',
+  omc_run_team_cleanup: 'omc team cleanup <job_id>',
+};
+
+function isDeprecatedTeamToolName(name: string): name is DeprecatedTeamToolName {
+  return Object.prototype.hasOwnProperty.call(TEAM_CLI_REPLACEMENT_HINTS, name);
+}
+
+export function createDeprecatedCliOnlyEnvelope(toolName: DeprecatedTeamToolName): {
+  content: Array<{ type: 'text'; text: string }>;
+  isError: true;
+} {
+  return createDeprecatedCliOnlyEnvelopeWithArgs(toolName);
+}
+
+function quoteCliValue(value: string): string {
+  return JSON.stringify(value);
+}
+
+function buildCliReplacement(toolName: DeprecatedTeamToolName, args: unknown): string {
+  const hasArgsObject = typeof args === 'object' && args !== null;
+  if (!hasArgsObject) {
+    return TEAM_CLI_REPLACEMENT_HINTS[toolName];
+  }
+
+  const parsed = (typeof args === 'object' && args !== null) ? args as Record<string, unknown> : {};
+
+  if (toolName === 'omc_run_team_start') {
+    const teamName = typeof parsed.teamName === 'string' ? parsed.teamName.trim() : '';
+    const cwd = typeof parsed.cwd === 'string' ? parsed.cwd.trim() : '';
+    const agentTypes = Array.isArray(parsed.agentTypes)
+      ? parsed.agentTypes.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
+    const tasks = Array.isArray(parsed.tasks)
+      ? parsed.tasks
+        .map((task) => (typeof task === 'object' && task !== null && typeof (task as { description?: unknown }).description === 'string')
+          ? (task as { description: string }).description.trim()
+          : '',
+        )
+        .filter(Boolean)
+      : [];
+
+    const flags: string[] = ['omc', 'team', 'start'];
+    if (teamName) flags.push('--name', quoteCliValue(teamName));
+    if (cwd) flags.push('--cwd', quoteCliValue(cwd));
+
+    if (agentTypes.length > 0) {
+      const uniqueAgentTypes = new Set(agentTypes);
+      if (uniqueAgentTypes.size === 1) {
+        flags.push('--agent', quoteCliValue(agentTypes[0]), '--count', String(agentTypes.length));
+      } else {
+        flags.push('--agent', quoteCliValue(agentTypes.join(',')));
+      }
+    } else {
+      flags.push('--agent', '"claude"');
+    }
+
+    if (tasks.length > 0) {
+      for (const task of tasks) {
+        flags.push('--task', quoteCliValue(task));
+      }
+    } else {
+      flags.push('--task', '"<task>"');
+    }
+
+    return flags.join(' ');
+  }
+
+  const jobId = typeof parsed.job_id === 'string' ? parsed.job_id.trim() : '<job_id>';
+  if (toolName === 'omc_run_team_status') {
+    return `omc team status --job-id ${quoteCliValue(jobId)}`;
+  }
+
+  if (toolName === 'omc_run_team_wait') {
+    const timeoutMs = typeof parsed.timeout_ms === 'number' && Number.isFinite(parsed.timeout_ms)
+      ? ` --timeout-ms ${Math.floor(parsed.timeout_ms)}`
+      : '';
+    return `omc team wait --job-id ${quoteCliValue(jobId)}${timeoutMs}`;
+  }
+
+  if (toolName === 'omc_run_team_cleanup') {
+    const graceMs = typeof parsed.grace_ms === 'number' && Number.isFinite(parsed.grace_ms)
+      ? ` --grace-ms ${Math.floor(parsed.grace_ms)}`
+      : '';
+    return `omc team cleanup --job-id ${quoteCliValue(jobId)}${graceMs}`;
+  }
+
+  return TEAM_CLI_REPLACEMENT_HINTS[toolName];
+}
+
+export function createDeprecatedCliOnlyEnvelopeWithArgs(
+  toolName: DeprecatedTeamToolName,
+  args?: unknown,
+): {
+  content: Array<{ type: 'text'; text: string }>;
+  isError: true;
+} {
+  const cliReplacement = buildCliReplacement(toolName, args);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        code: DEPRECATION_CODE,
+        tool: toolName,
+        message: 'Legacy team MCP runtime tools are deprecated. Use the omc team CLI instead.',
+        cli_replacement: cliReplacement,
+      }),
+    }],
+    isError: true,
+  };
+}
 
 function persistJob(jobId: string, job: OmcTeamJob): void {
   try {
@@ -310,7 +433,7 @@ export async function handleCleanup(args: unknown): Promise<{ content: Array<{ t
 const TOOLS = [
   {
     name: 'omc_run_team_start',
-    description: 'Spawn tmux CLI workers (claude/codex/gemini) in the background. Returns jobId immediately. Poll with omc_run_team_status.',
+    description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team start`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -335,7 +458,7 @@ const TOOLS = [
   },
   {
     name: 'omc_run_team_status',
-    description: 'Non-blocking status check for a background omc_run_team job. Returns status and result when done.',
+    description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team status <job_id>`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -346,7 +469,7 @@ const TOOLS = [
   },
   {
     name: 'omc_run_team_wait',
-    description: 'Block (poll internally) until a background omc_run_team job reaches a terminal state (completed or failed). Returns the result when done. One call instead of N polling calls. Uses exponential backoff (500ms → 2000ms). Auto-nudges idle teammate panes via tmux send-keys. If this wait call times out, workers are left running — call omc_run_team_wait again to keep waiting, or omc_run_team_cleanup to stop them explicitly.',
+    description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team wait <job_id>`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -361,7 +484,7 @@ const TOOLS = [
   },
   {
     name: 'omc_run_team_cleanup',
-    description: 'Explicitly clean up worker panes when you want to stop workers. Kills all worker panes recorded for the job without touching the leader pane or the user session.',
+    description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team cleanup <job_id>`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -382,6 +505,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  if (isDeprecatedTeamToolName(name)) {
+    return createDeprecatedCliOnlyEnvelopeWithArgs(name, args);
+  }
+
   try {
     if (name === 'omc_run_team_start') return await handleStart(args ?? {});
     if (name === 'omc_run_team_status') return await handleStatus(args ?? {});

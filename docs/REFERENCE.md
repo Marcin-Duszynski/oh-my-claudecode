@@ -8,7 +8,8 @@ Complete reference for oh-my-claudecode. For quick start, see the main [README.m
 
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [MCP Team Runtime Tools](#mcp-team-runtime-tools)
+- [CLI Commands: ask/team](#cli-commands-askteam)
+- [Legacy MCP Team Runtime Tools (Deprecated)](#legacy-mcp-team-runtime-tools-deprecated)
 - [Agents (28 Total)](#agents-28-total)
 - [Skills (38 Total)](#skills-38-total)
 - [Slash Commands](#slash-commands)
@@ -187,16 +188,53 @@ Tag behavior:
 
 ---
 
-## MCP Team Runtime Tools
+## CLI Commands: ask/team
 
-When using the Team MCP server (`bridge/team-mcp.cjs`), these tools are available:
+### `omc ask`
+
+```bash
+omc ask claude "review this patch"
+omc ask gemini --prompt "suggest UX improvements"
+omc ask claude --agent-prompt executor --prompt "create an implementation plan"
+```
+
+- Provider matrix: `claude | gemini`
+- Artifacts: `.omc/artifacts/ask/{provider}-{slug}-{timestamp}.md`
+- Canonical env vars: `OMC_ASK_ADVISOR_SCRIPT`, `OMC_ASK_ORIGINAL_TASK`
+- Phase-1 aliases (deprecated warning): `OMX_ASK_ADVISOR_SCRIPT`, `OMX_ASK_ORIGINAL_TASK`
+
+### `omc team` (MVP runtime surface)
+
+```bash
+omc team start --agent codex --count 2 --task "review auth flow"
+omc team status <job_id>
+omc team wait <job_id> --timeout-ms 300000
+omc team cleanup <job_id> --grace-ms 5000
+```
+
+Supported subcommands in this integration phase: `start`, `status`, `wait`, `cleanup`.
+
+---
+
+## Legacy MCP Team Runtime Tools (Deprecated)
+
+The Team MCP server remains registered for compatibility, but runtime tools are now **CLI-only deprecated** and return a deterministic error envelope:
+
+```json
+{
+  "code": "deprecated_cli_only",
+  "message": "Legacy team MCP runtime tools are deprecated. Use the omc team CLI instead."
+}
+```
+
+Use `omc team ...` replacements instead:
 
 | Tool | Purpose |
 |------|---------|
-| `omc_run_team_start` | Start tmux workers in background and return `jobId` immediately |
-| `omc_run_team_status` | Non-blocking status check for a background team job |
-| `omc_run_team_wait` | Blocking wait with internal polling, backoff, and idle nudge support |
-| `omc_run_team_cleanup` | Explicitly stop worker panes and clear scoped team state directory |
+| `omc_run_team_start` | **Deprecated** → `omc team start` |
+| `omc_run_team_status` | **Deprecated** → `omc team status <job_id>` |
+| `omc_run_team_wait` | **Deprecated** → `omc team wait <job_id>` |
+| `omc_run_team_cleanup` | **Deprecated** → `omc team cleanup <job_id>` |
 
 ### Runtime status semantics
 

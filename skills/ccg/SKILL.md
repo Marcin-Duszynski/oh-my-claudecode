@@ -28,7 +28,7 @@ CCG spawns a tmux team with Codex and Gemini CLI workers running in parallel pan
    - Backend/analytical tasks → Codex worker
    - Frontend/UI/design tasks → Gemini worker
 
-2. mcp__team__omc_run_team_start creates a tmux session with 2 workers:
+2. `omc team start` creates a tmux session with 2 workers:
    omc-team-{name}
    ├── Leader pane (Claude orchestrates)
    ├── Worker pane 1: codex CLI (analytical tasks)
@@ -36,7 +36,7 @@ CCG spawns a tmux team with Codex and Gemini CLI workers running in parallel pan
 
 3. Workers read tasks from inbox files and write done.json on completion
 
-4. mcp__team__omc_run_team_wait blocks until all workers finish
+4. `omc team wait` blocks until all workers finish
 
 5. Claude reads taskResults and synthesizes into final output
 ```
@@ -55,36 +55,26 @@ Choose a short `teamName` slug (e.g., `ccg-auth-review`).
 
 ### 2. Start the team (non-blocking)
 
-Call `mcp__team__omc_run_team_start` — spawns workers in the background and returns a `jobId` immediately:
+Run `omc team start` — spawns workers in the background and returns a `jobId` immediately:
 
 ```
-mcp__team__omc_run_team_start({
-  "teamName": "ccg-{slug}",
-  "agentTypes": ["codex", "gemini"],
-  "tasks": [
-    {"subject": "Codex task: ...", "description": "Full description of analytical work..."},
-    {"subject": "Gemini task: ...", "description": "Full description of design/UI work..."}
-  ],
-  "cwd": "{cwd}"
-})
+omc team start --name "ccg-{slug}" --agent codex --count 1 --cwd "{cwd}" --task "Codex task: ..."
+omc team start --name "ccg-{slug}" --agent gemini --count 1 --cwd "{cwd}" --task "Gemini task: ..."
 ```
 
 Returns: `{ "jobId": "omc-...", "pid": 12345, "message": "Team started in background..." }`
 
 ### 3. Wait for completion
 
-Call `mcp__team__omc_run_team_wait` — blocks internally until done:
+Run `omc team wait <job_id>` — blocks internally until done:
 
 ```
-mcp__team__omc_run_team_wait({
-  "job_id": "{jobId}",
-  "timeout_ms": 60000
-})
+omc team wait "{jobId}"
 ```
 
 > **Timeout guidance:** `timeout_ms` is optional; the default wait timeout is fine.
-> If wait times out, workers/panes keep running. Call `omc_run_team_wait` again to keep
-> waiting. Use `omc_run_team_cleanup` only for explicit cancel intent.
+> If wait times out, workers/panes keep running. Call `omc team wait <job_id>` again to keep
+> waiting. Use `omc team cleanup <job_id>` only for explicit cancel intent.
 
 Returns when done:
 ```json

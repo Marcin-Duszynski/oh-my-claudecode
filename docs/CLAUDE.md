@@ -62,8 +62,9 @@ Coordination:
 <tools>
 External AI (tmux CLI workers):
 - Claude agents: `/team N:executor "task"` via `TeamCreate`/`Task`
-- Codex/Gemini workers: `/omc-teams N:codex "task"` via tmux panes
-- MCP tools: `omc_run_team_start`, `omc_run_team_wait`, `omc_run_team_status`, `omc_run_team_cleanup`
+- Codex/Gemini workers: `omc team start --agent codex|gemini --count N --task "..."`
+- Provider advisor CLI: `omc ask <claude|gemini> ...` (writes artifacts to `.omc/artifacts/ask/`)
+- Legacy MCP runtime tools (`omc_run_team_*`) are deprecated with `deprecated_cli_only` and should not be used for execution.
 
 OMC State: `state_read`, `state_write`, `state_clear`, `state_list_active`, `state_get_status`
 - Stored at `{worktree}/.omc/state/{mode}-state.json`; session-scoped under `.omc/state/sessions/{sessionId}/`
@@ -88,7 +89,7 @@ Workflow:
 - `ralph` ("ralph", "don't stop", "must complete"): self-referential loop with verifier verification; includes ultrawork
 - `ultrawork` ("ulw", "ultrawork"): maximum parallelism with parallel agent orchestration
 - `team` ("team", "coordinated team", "team ralph"): N coordinated Claude agents with stage-aware routing; `team ralph` for persistent team execution
-- `omc-teams` ("omc-teams", "codex", "gemini"): spawn CLI workers in tmux panes
+- `omc-teams` ("omc-teams", "codex", "gemini"): legacy alias that routes to CLI-first `omc team ...` worker execution
 - `ccg` ("ccg", "tri-model", "claude codex gemini"): fan out to Codex + Gemini, Claude synthesizes
 - `ultraqa` (activated by autopilot): QA cycling -- test, verify, fix, repeat
 - `omc-plan` ("plan this", "plan the"): strategic planning; supports `--consensus` and `--review`
@@ -108,7 +109,7 @@ Agent Shortcuts (thin wrappers):
 Notifications: `configure-notifications` ("configure discord", "setup telegram", "configure slack")
 Utilities: `cancel`, `note`, `learner`, `omc-setup`, `mcp-setup`, `hud`, `omc-doctor`, `omc-help`, `trace`, `release`, `project-session-manager`, `skill`, `writer-memory`, `ralph-init`, `learn-about-omc`
 
-Disambiguation: bare "codex"/"gemini" -> omc-teams; "claude codex gemini" -> ccg. Ralph includes ultrawork.
+Disambiguation: bare "codex"/"gemini" -> omc-teams (legacy alias to `omc team`); "claude codex gemini" -> ccg. Ralph includes ultrawork.
 </skills>
 
 <team_pipeline>

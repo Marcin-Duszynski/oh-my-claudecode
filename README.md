@@ -74,13 +74,15 @@ Enable Claude Code native teams in `~/.claude/settings.json`:
 
 ### tmux CLI Workers — Codex & Gemini (v4.4.0+)
 
-**v4.4.0 removes the Codex/Gemini MCP servers** (`x`, `g` providers). Use `/omc-teams` to spawn real CLI processes in tmux split-panes instead:
+**v4.4.0 removes the Codex/Gemini MCP servers** (`x`, `g` providers). Use the CLI-first Team runtime (`omc team ...`) to spawn real tmux worker panes:
 
 ```bash
-/omc-teams 2:codex   "review auth module for security issues"
-/omc-teams 2:gemini  "redesign UI components for accessibility"
-/omc-teams 1:claude  "implement the payment flow"
+omc team start --agent codex --count 2 --task "review auth module for security issues"
+omc team start --agent gemini --count 2 --task "redesign UI components for accessibility"
+omc team start --agent claude --count 1 --task "implement the payment flow"
 ```
+
+`/omc-teams` remains as a legacy compatibility skill and now routes to `omc team ...`.
 
 For mixed Codex + Gemini work in one command, use the **`/ccg`** skill:
 
@@ -88,11 +90,11 @@ For mixed Codex + Gemini work in one command, use the **`/ccg`** skill:
 /ccg Review this PR — architecture (Codex) and UI components (Gemini)
 ```
 
-| Skill | Workers | Best For |
+| Surface | Workers | Best For |
 |-------|---------|----------|
-| `/omc-teams N:codex` | N Codex CLI panes | Code review, security analysis, architecture |
-| `/omc-teams N:gemini` | N Gemini CLI panes | UI/UX design, docs, large-context tasks |
-| `/omc-teams N:claude` | N Claude CLI panes | General tasks via Claude CLI in tmux |
+| `omc team start --agent codex --count N ...` | N Codex CLI panes | Code review, security analysis, architecture |
+| `omc team start --agent gemini --count N ...` | N Gemini CLI panes | UI/UX design, docs, large-context tasks |
+| `omc team start --agent claude --count N ...` | N Claude CLI panes | General tasks via Claude CLI in tmux |
 | `/ccg` | 1 Codex + 1 Gemini | Parallel tri-model orchestration |
 
 Workers spawn on-demand and die when their task completes — no idle resource usage. Requires `codex` / `gemini` CLIs installed and an active tmux session.
@@ -146,7 +148,7 @@ Multiple strategies for different use cases — from Team-backed orchestration t
 | Mode | What it is | Use For |
 |------|------------|---------|
 | **Team (recommended)** | Canonical staged pipeline (`team-plan → team-prd → team-exec → team-verify → team-fix`) | Coordinated Claude agents on a shared task list |
-| **omc-teams** | tmux CLI workers — real `claude`/`codex`/`gemini` processes in split-panes | Codex/Gemini CLI tasks; on-demand spawn, die when done |
+| **omc team (CLI)** | tmux CLI workers — real `claude`/`codex`/`gemini` processes in split-panes | Codex/Gemini CLI tasks; on-demand spawn, die when done |
 | **ccg** | Tri-model: Codex (analytical) + Gemini (design) in parallel, Claude synthesizes | Mixed backend+UI work needing both Codex and Gemini |
 | **Autopilot** | Autonomous execution (single lead agent) | End-to-end feature work with minimal ceremony |
 | **Ultrawork** | Maximum parallelism (non-team) | Burst parallel fixes/refactors where Team isn't needed |
@@ -178,7 +180,7 @@ Optional shortcuts for power users. Natural language works fine without them.
 | Keyword | Effect | Example |
 |---------|--------|---------|
 | `team` | Canonical Team orchestration | `/team 3:executor "fix all TypeScript errors"` |
-| `omc-teams` | tmux CLI workers (codex/gemini/claude) | `/omc-teams 2:codex "security review"` |
+| `omc team` | tmux CLI workers (codex/gemini/claude) | `omc team start --agent codex --count 2 --task "security review"` |
 | `ccg` | Tri-model Codex+Gemini orchestration | `/ccg review this PR` |
 | `autopilot` | Full autonomous execution | `autopilot: build a todo app` |
 | `ralph` | Persistence mode | `ralph: refactor auth` |
@@ -194,6 +196,22 @@ Optional shortcuts for power users. Natural language works fine without them.
 - `swarm N agents` syntax is still recognized for agent count extraction, but the runtime is Team-backed in v4.1.7+.
 
 ## Utilities
+
+### Provider Advisor (`omc ask`)
+
+Run local provider CLIs and save a markdown artifact under `.omc/artifacts/ask/`:
+
+```bash
+omc ask claude "review this migration plan"
+omc ask gemini --prompt "propose UI polish ideas"
+omc ask claude --agent-prompt executor --prompt "draft implementation steps"
+```
+
+Canonical env vars:
+- `OMC_ASK_ADVISOR_SCRIPT`
+- `OMC_ASK_ORIGINAL_TASK`
+
+Phase-1 aliases `OMX_ASK_ADVISOR_SCRIPT` and `OMX_ASK_ORIGINAL_TASK` are accepted with deprecation warnings.
 
 ### Rate Limit Wait
 
@@ -309,4 +327,3 @@ If Oh-My-ClaudeCode helps your workflow, consider sponsoring:
 - 🐛 Report bugs
 - 💡 Suggest features
 - 📝 Contribute code
-

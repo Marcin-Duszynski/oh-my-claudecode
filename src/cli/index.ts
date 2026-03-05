@@ -59,6 +59,7 @@ import {
 import { getRuntimePackageVersion } from '../lib/version.js';
 import { launchCommand } from './launch.js';
 import { interopCommand } from './interop.js';
+import { askCommand, ASK_USAGE } from './ask.js';
 import { warnIfWin32 } from './win32-warning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +78,34 @@ async function defaultAction() {
   const args = process.argv.slice(2);
   await launchCommand(args);
 }
+
+async function runTeamCommand(args: string[]): Promise<void> {
+  const teamModuleUrl = new URL('./team.js', import.meta.url).href;
+  const teamModule = await import(teamModuleUrl) as {
+    teamCommand?: (argv: string[]) => Promise<void> | void;
+    main?: (argv: string[]) => Promise<void> | void;
+    default?: (argv: string[]) => Promise<void> | void;
+  };
+
+  const runner = teamModule.teamCommand ?? teamModule.main ?? teamModule.default;
+  if (!runner) {
+    throw new Error('Team CLI command module loaded but no runnable export found (expected teamCommand, main, or default).');
+  }
+
+  await runner(args);
+}
+
+const TEAM_COMMAND_USAGE = `
+Usage:
+  omc team start --agent <claude|codex|gemini>[,<agent>...] --task "<task>" [--count N] [--name TEAM] [--cwd DIR] [--json]
+  omc team status <job_id|team_name> [--json] [--cwd DIR]
+  omc team wait <job_id> [--timeout-ms MS] [--json]
+  omc team cleanup <job_id> [--grace-ms MS] [--json]
+  omc team resume <team_name> [--json] [--cwd DIR]
+  omc team shutdown <team_name> [--force] [--json] [--cwd DIR]
+  omc team api <operation> [--input '<json>'] [--json] [--cwd DIR]
+  omc team [ralph] <N:agent-type> "task" [--json] [--cwd DIR]
+`.trim();
 
 program
   .name('omc')
@@ -126,6 +155,18 @@ Requirements:
   - Codex CLI recommended (graceful fallback if missing)`)
   .action(() => {
     interopCommand();
+  });
+
+/**
+ * Ask command - Run provider advisor prompt (claude|gemini)
+ */
+program
+  .command('ask [args...]')
+  .description('Run provider advisor prompt and write an ask artifact')
+  .allowUnknownOption()
+  .addHelpText('after', `\n${ASK_USAGE}`)
+  .action(async (args: string[]) => {
+    await askCommand(args || []);
   });
 
 /**
@@ -1174,6 +1215,15 @@ waitCmd
       json: options.json,
       lines: parseInt(options.lines),
     });
+  });
+
+program
+  .command('team [args...]')
+  .description('Team CLI runtime + legacy commands (start/status/wait/cleanup/resume/shutdown/api)')
+  .allowUnknownOption()
+  .addHelpText('after', `\n${TEAM_COMMAND_USAGE}`)
+  .action(async (args: string[]) => {
+    await runTeamCommand(args);
   });
 
 /**
