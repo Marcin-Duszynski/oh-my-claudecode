@@ -10,7 +10,7 @@ import {
 } from '../lib/featured-contributors.js';
 
 describe('featured contributors generator', () => {
-  it('picks the top personal non-fork repo for a contributor', () => {
+  it('picks the top personal non-fork non-archived repo for a contributor', () => {
     const repo = pickTopPersonalRepo('alice', [
       {
         name: 'forked-hit',
@@ -18,6 +18,15 @@ describe('featured contributors generator', () => {
         html_url: 'https://github.com/alice/forked-hit',
         stargazers_count: 500,
         fork: true,
+        owner: { login: 'alice', type: 'User' },
+      },
+      {
+        name: 'archived-hit',
+        full_name: 'alice/archived-hit',
+        html_url: 'https://github.com/alice/archived-hit',
+        stargazers_count: 450,
+        fork: false,
+        archived: true,
         owner: { login: 'alice', type: 'User' },
       },
       {
@@ -72,6 +81,7 @@ describe('featured contributors generator', () => {
     expect(block).toContain(FEATURED_CONTRIBUTORS_START_MARKER);
     expect(block).toContain(FEATURED_CONTRIBUTORS_END_MARKER);
     expect(block).toContain(FEATURED_CONTRIBUTORS_TITLE);
+    expect(block).toContain('Top personal non-fork, non-archived repos');
     expect(block.indexOf('@alice')).toBeLessThan(block.indexOf('@charlie'));
     expect(block).toContain('(⭐ 2.4k)');
     expect(block).toContain('(⭐ 150)');
@@ -103,6 +113,27 @@ describe('featured contributors generator', () => {
     expect(updated).toContain('New block');
     expect(updated).not.toContain('Old block');
     expect(updated).toContain('## Star History');
+  });
+
+  it('replacing an existing marker block stays idempotent around trailing spacing', () => {
+    const featuredSection =
+      `${FEATURED_CONTRIBUTORS_START_MARKER}\nNew block\n${FEATURED_CONTRIBUTORS_END_MARKER}\n`;
+    const original = [
+      '# README',
+      '',
+      FEATURED_CONTRIBUTORS_START_MARKER,
+      'Old block',
+      FEATURED_CONTRIBUTORS_END_MARKER,
+      '',
+      '',
+      '## Star History',
+    ].join('\n');
+
+    const once = upsertFeaturedContributorsSection(original, featuredSection);
+    const twice = upsertFeaturedContributorsSection(once, featuredSection);
+
+    expect(once).toBe(twice);
+    expect(once).toContain(`${FEATURED_CONTRIBUTORS_END_MARKER}\n\n## Star History`);
   });
 
   it('formats star counts compactly for README output', () => {

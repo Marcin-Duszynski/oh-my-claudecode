@@ -404,12 +404,16 @@ MIT
 <!-- OMC:FEATURED-CONTRIBUTORS:START -->
 ## Featured by OmC Contributors
 
-Top personal non-fork repos from all-time OMC contributors (100+ GitHub stars).
+Top personal non-fork, non-archived repos from all-time OMC contributors (100+ GitHub stars).
 
 - [@Yeachan-Heo](https://github.com/Yeachan-Heo) — [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (⭐ 9.4k)
-- [@junhoyeo](https://github.com/junhoyeo) — [threads-api](https://github.com/junhoyeo/threads-api) (⭐ 1.6k)
-
-_Refresh with `npm run sync-featured-contributors` to pull the full live list from GitHub._
+- [@junhoyeo](https://github.com/junhoyeo) — [tokscale](https://github.com/junhoyeo/tokscale) (⭐ 1.1k)
+- [@marlocarlo](https://github.com/marlocarlo) — [psmux](https://github.com/marlocarlo/psmux) (⭐ 450)
+- [@BowTiedSwan](https://github.com/BowTiedSwan) — [buildflow](https://github.com/BowTiedSwan/buildflow) (⭐ 282)
+- [@emgeee](https://github.com/emgeee) — [mean-tutorial](https://github.com/emgeee/mean-tutorial) (⭐ 200)
+- [@anduinnn](https://github.com/anduinnn) — [HiFiNi-Auto-CheckIn](https://github.com/anduinnn/HiFiNi-Auto-CheckIn) (⭐ 171)
+- [@Znuff](https://github.com/Znuff) — [consolas-powerline](https://github.com/Znuff/consolas-powerline) (⭐ 145)
+- [@shaun0927](https://github.com/shaun0927) — [openchrome](https://github.com/shaun0927/openchrome) (⭐ 136)
 
 <!-- OMC:FEATURED-CONTRIBUTORS:END -->
 

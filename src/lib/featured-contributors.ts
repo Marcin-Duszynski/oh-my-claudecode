@@ -27,6 +27,7 @@ export interface GitHubRepo {
   html_url: string;
   stargazers_count: number;
   fork: boolean;
+  archived?: boolean;
   owner: {
     login: string;
     type: string;
@@ -214,7 +215,11 @@ export function sortFeaturedContributors(entries: FeaturedContributor[]): Featur
 
 export function pickTopPersonalRepo(login: string, repos: GitHubRepo[]): GitHubRepo | null {
   const eligibleRepos = repos.filter(
-    (repo) => !repo.fork && repo.owner.login === login && repo.owner.type === 'User'
+    (repo) =>
+      !repo.fork &&
+      !repo.archived &&
+      repo.owner.login === login &&
+      repo.owner.type === 'User'
   );
 
   if (eligibleRepos.length === 0) {
@@ -283,7 +288,7 @@ export function renderFeaturedContributorsSection(
     FEATURED_CONTRIBUTORS_START_MARKER,
     FEATURED_CONTRIBUTORS_TITLE,
     '',
-    `Top personal non-fork repos from all-time OMC contributors (${minStars}+ GitHub stars).`,
+    `Top personal non-fork, non-archived repos from all-time OMC contributors (${minStars}+ GitHub stars).`,
     '',
   ];
 
@@ -312,7 +317,11 @@ export function upsertFeaturedContributorsSection(
 
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
     const blockEnd = endIndex + FEATURED_CONTRIBUTORS_END_MARKER.length;
-    return `${readmeContent.slice(0, startIndex)}${featuredSection}${readmeContent.slice(blockEnd)}`;
+    const trailingContent = readmeContent.slice(blockEnd);
+
+    return trailingContent.length === 0
+      ? `${readmeContent.slice(0, startIndex)}${featuredSection}`
+      : `${readmeContent.slice(0, startIndex)}${featuredSection}${trailingContent.replace(/^\n+/, '\n')}`;
   }
 
   const anchorIndex = readmeContent.indexOf(anchor);
