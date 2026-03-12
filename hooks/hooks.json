@@ -65,16 +65,6 @@
             "timeout": 3
           }
         ]
-      },
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/context-safety.mjs\"",
-            "timeout": 3
-          }
-        ]
       }
     ],
     "PermissionRequest": [
