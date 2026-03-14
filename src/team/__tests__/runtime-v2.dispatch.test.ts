@@ -112,10 +112,12 @@ describe('runtime v2 startup inbox dispatch', () => {
     expect(requests[0]?.inbox_correlation_key).toBe('startup:worker-1:1');
     expect(requests[0]?.trigger_message).toContain('.omc/state/team/dispatch-team/workers/worker-1/inbox.md');
     expect(requests[0]?.trigger_message).toContain('start work now');
+    expect(requests[0]?.trigger_message).toContain('next feasible work');
 
     const inboxPath = join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'workers', 'worker-1', 'inbox.md');
     const inbox = await readFile(inboxPath, 'utf-8');
     expect(inbox).toContain('Dispatch test');
+    expect(inbox).toContain('ACK/progress replies are not a stop signal');
     expect(mocks.sendToWorker).toHaveBeenCalledWith(
       'dispatch-session',
       '%2',
