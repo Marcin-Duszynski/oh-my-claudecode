@@ -14,6 +14,7 @@ import {
   resolveSessionStatePath,
   ensureSessionStateDir,
   ensureOmcDir,
+  listSessionIds,
 } from './worktree-paths.js';
 
 export function getStateSessionOwner(state: Record<string, unknown> | null | undefined): string | undefined {
@@ -157,13 +158,27 @@ export function clearModeStateFile(
   sessionId?: string,
 ): boolean {
   let success = true;
-  const filePath = resolveFile(mode, directory, sessionId);
+  const unlinkIfPresent = (filePath: string): void => {
+    if (!existsSync(filePath)) {
+      return;
+    }
 
-  if (existsSync(filePath)) {
     try {
       unlinkSync(filePath);
     } catch {
       success = false;
+    }
+  };
+
+  if (sessionId) {
+    unlinkIfPresent(resolveFile(mode, directory, sessionId));
+  } else {
+    for (const legacyPath of getLegacyStateCandidates(mode, directory)) {
+      unlinkIfPresent(legacyPath);
+    }
+
+    for (const sid of listSessionIds(directory)) {
+      unlinkIfPresent(resolveSessionStatePath(mode, sid, directory));
     }
   }
 
