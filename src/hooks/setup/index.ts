@@ -9,9 +9,9 @@
 
 import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, unlinkSync, readFileSync, readlinkSync, writeFileSync, appendFileSync, symlinkSync, copyFileSync, renameSync } from 'fs';
 import { join } from 'path';
-import os from 'os';
 
 import { registerBeadsContext } from '../beads-context/index.js';
+import { getConfigDir } from '../../utils/config-dir.js';
 
 // ============================================================================
 // Types
@@ -193,7 +193,7 @@ export function patchHooksJsonForWindows(pluginRoot: string): void {
  * Falls back to copy if symlink is unavailable on the platform.
  */
 export function ensureStdinSymlink(pluginRoot: string): void {
-  const libDstDir = join(os.homedir(), '.claude/hooks/lib');
+  const libDstDir = join(getConfigDir(), 'hooks/lib');
   const libSrc = join(pluginRoot, 'templates/hooks/lib');
   const stdinSrc = join(libSrc, 'stdin.mjs');
   const stdinDst = join(libDstDir, 'stdin.mjs');
