@@ -52,7 +52,7 @@ interface UsageCache {
   /** Preserved error reason for accurate cache-hit reporting */
   errorReason?: UsageErrorReason;
   /** Provider that produced this cache entry */
-  source?: 'anthropic' | 'zai';
+  source?: 'anthropic' | 'zai' | 'minimax';
   /** Whether this cache entry was caused by a 429 rate limit response */
   rateLimited?: boolean;
   /** Consecutive 429 count for exponential backoff */
@@ -107,6 +107,41 @@ export function isZaiHost(urlString: string): boolean {
 }
 
 /**
+ * Check if a URL points to MiniMax (exact hostname match)
+ */
+export function isMinimaxHost(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    const hostname = url.hostname.toLowerCase();
+    return hostname === 'minimax.io' || hostname.endsWith('.minimax.io');
+  } catch {
+    return false;
+  }
+}
+
+interface MinimaxModelRemain {
+  model_name: string;
+  current_interval_total_count: number;
+  current_interval_usage_count: number;
+  start_time: number;
+  end_time: number;
+  remains_time: number;
+  current_weekly_total_count: number;
+  current_weekly_usage_count: number;
+  weekly_start_time: number;
+  weekly_end_time: number;
+  weekly_remains_time: number;
+}
+
+interface MinimaxCodingPlanResponse {
+  model_remains?: MinimaxModelRemain[];
+  base_resp?: {
+    status_code: number;
+    status_msg: string;
+  };
+}
+
+/**
  * Get the legacy (pre-split) cache file path
  */
 function getLegacyCachePath(): string {
@@ -116,7 +151,7 @@ function getLegacyCachePath(): string {
 /**
  * Get the provider-specific cache file path
  */
-function getCachePath(source: 'anthropic' | 'zai'): string {
+function getCachePath(source: 'anthropic' | 'zai' | 'minimax'): string {
   return join(getClaudeConfigDir(), 'plugins', 'oh-my-claudecode', `.usage-cache-${source}.json`);
 }
 
@@ -126,7 +161,7 @@ function getCachePath(source: 'anthropic' | 'zai'): string {
  * and the legacy cache's source matches the current provider.
  * Does NOT delete the legacy file (rolling update safety).
  */
-function migrateLegacyCache(source: 'anthropic' | 'zai'): void {
+function migrateLegacyCache(source: 'anthropic' | 'zai' | 'minimax'): void {
   try {
     const legacyPath = getLegacyCachePath();
     if (!existsSync(legacyPath)) return;
@@ -154,7 +189,7 @@ function migrateLegacyCache(source: 'anthropic' | 'zai'): void {
 /**
  * Read cached usage data for a specific provider
  */
-function readCache(source: 'anthropic' | 'zai'): UsageCache | null {
+function readCache(source: 'anthropic' | 'zai' | 'minimax'): UsageCache | null {
   try {
     const cachePath = getCachePath(source);
     if (!existsSync(cachePath)) return null;
@@ -193,7 +228,7 @@ function readCache(source: 'anthropic' | 'zai'): UsageCache | null {
 interface WriteCacheOptions {
   data: RateLimits | null;
   error?: boolean;
-  source?: 'anthropic' | 'zai';
+  source: 'anthropic' | 'zai' | 'minimax';
   rateLimited?: boolean;
   rateLimitedCount?: number;
   rateLimitedUntil?: number;
@@ -206,7 +241,7 @@ interface WriteCacheOptions {
  */
 function writeCache(opts: WriteCacheOptions): void {
   try {
-    const cachePath = getCachePath(opts.source!);
+    const cachePath = getCachePath(opts.source);
     const cacheDir = dirname(cachePath);
 
     if (!existsSync(cacheDir)) {
@@ -311,7 +346,7 @@ function getCachedUsageResult(cache: UsageCache): UsageResult {
 }
 
 function createRateLimitedCacheEntry(
-  source: 'anthropic' | 'zai',
+  source: 'anthropic' | 'zai' | 'minimax',
   data: RateLimits | null,
   pollIntervalMs: number,
   previousCount: number,
@@ -806,6 +841,181 @@ export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null 
 }
 
 /**
+ * Fetch usage from MiniMax coding plan API
+ */
+function fetchUsageFromMinimax(apiKey: string): Promise<FetchResult<MinimaxCodingPlanResponse>> {
+  return new Promise((resolve) => {
+    const baseUrl = process.env.ANTHROPIC_BASE_URL;
+
+    if (!baseUrl) {
+      resolve({ data: null });
+      return;
+    }
+
+    // Validate baseUrl for SSRF protection
+    const validation = validateAnthropicBaseUrl(baseUrl);
+    if (!validation.allowed) {
+      console.error(`[SSRF Guard] Blocking usage API call: ${validation.reason}`);
+      resolve({ data: null });
+      return;
+    }
+
+    try {
+      const url = new URL(baseUrl);
+      const baseDomain = `${url.protocol}//${url.host}`;
+      const quotaUrl = `${baseDomain}/v1/api/openplatform/coding_plan/remains`;
+      const urlObj = new URL(quotaUrl);
+
+      const req = https.request(
+        {
+          hostname: urlObj.hostname,
+          path: urlObj.pathname,
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: API_TIMEOUT_MS,
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              try {
+                resolve({ data: JSON.parse(data) });
+              } catch {
+                resolve({ data: null });
+              }
+            } else if (res.statusCode === 429) {
+              if (process.env.OMC_DEBUG) {
+                console.error(`[usage-api] MiniMax API returned 429 (rate limited)`);
+              }
+              resolve({ data: null, rateLimited: true });
+            } else {
+              resolve({ data: null });
+            }
+          });
+        }
+      );
+
+      req.on('error', () => resolve({ data: null }));
+      req.on('timeout', () => { req.destroy(); resolve({ data: null }); });
+      req.end();
+    } catch {
+      resolve({ data: null });
+    }
+  });
+}
+
+/**
+ * Parse MiniMax coding plan API response into RateLimits
+ */
+export function parseMinimaxResponse(response: MinimaxCodingPlanResponse): RateLimits | null {
+  // Check for API error status
+  if (response.base_resp?.status_code != null && response.base_resp.status_code !== 0) {
+    return null;
+  }
+
+  const models = response.model_remains;
+  if (!models || models.length === 0) return null;
+
+  // Find the primary coding model (first match, case-insensitive)
+  const codingModel = models.find(m => m.model_name.toLowerCase().startsWith('minimax-m'));
+  if (!codingModel) {
+    if (process.env.OMC_DEBUG) {
+      console.error('[usage-api] No MiniMax-M* model found in coding plan response');
+    }
+    return null;
+  }
+
+  // Calculate interval usage percentage (avoid division by zero)
+  const intervalTotal = codingModel.current_interval_total_count;
+  const intervalUsed = codingModel.current_interval_usage_count;
+  const intervalPercent = intervalTotal > 0 ? (intervalUsed / intervalTotal) * 100 : 0;
+
+  // Calculate weekly usage percentage
+  const weeklyTotal = codingModel.current_weekly_total_count;
+  const weeklyUsed = codingModel.current_weekly_usage_count;
+  const weeklyPercent = weeklyTotal > 0 ? (weeklyUsed / weeklyTotal) * 100 : 0;
+
+  // Parse reset times from Unix ms timestamps
+  const parseResetTime = (timestamp: number | undefined): Date | null => {
+    if (!timestamp) return null;
+    try {
+      const date = new Date(timestamp);
+      return isNaN(date.getTime()) ? null : date;
+    } catch {
+      return null;
+    }
+  };
+
+  return {
+    fiveHourPercent: clamp(intervalPercent),
+    fiveHourResetsAt: parseResetTime(codingModel.end_time),
+    weeklyPercent: clamp(weeklyPercent),
+    weeklyResetsAt: parseResetTime(codingModel.weekly_end_time),
+  };
+}
+
+/**
+ * Generic provider fetch-and-cache cycle.
+ * Handles 429 backoff, stale data fallback, and cache writes.
+ * Provider-specific pre-fetch logic (e.g., credential refresh) runs before calling this.
+ */
+async function fetchAndCacheUsage<T>(opts: {
+  source: 'anthropic' | 'zai' | 'minimax';
+  fetchFn: () => Promise<FetchResult<T>>;
+  parseFn: (data: T) => RateLimits | null;
+  cache: UsageCache | null;
+  pollIntervalMs: number;
+}): Promise<UsageResult> {
+  const { source, fetchFn, parseFn, cache, pollIntervalMs } = opts;
+  const result = await fetchFn();
+
+  if (result.rateLimited) {
+    const prevLastSuccess = cache?.lastSuccessAt;
+    const rateLimitedCache = createRateLimitedCacheEntry(source, cache?.data || null, pollIntervalMs, cache?.rateLimitedCount || 0, prevLastSuccess);
+    writeCache({
+      data: rateLimitedCache.data,
+      error: rateLimitedCache.error,
+      source,
+      rateLimited: true,
+      rateLimitedCount: rateLimitedCache.rateLimitedCount,
+      rateLimitedUntil: rateLimitedCache.rateLimitedUntil,
+      errorReason: 'rate_limited',
+      lastSuccessAt: rateLimitedCache.lastSuccessAt,
+    });
+    if (rateLimitedCache.data) {
+      if (prevLastSuccess && Date.now() - prevLastSuccess > MAX_STALE_DATA_MS) {
+        return { rateLimits: null, error: 'rate_limited' };
+      }
+      return { rateLimits: rateLimitedCache.data, error: 'rate_limited', stale: true };
+    }
+    return { rateLimits: null, error: 'rate_limited' };
+  }
+
+  if (!result.data) {
+    const fallbackData = hasUsableStaleData(cache) ? cache.data : null;
+    writeCache({
+      data: fallbackData,
+      error: true,
+      source,
+      errorReason: 'network',
+      lastSuccessAt: cache?.lastSuccessAt,
+    });
+    if (fallbackData) {
+      return { rateLimits: fallbackData, error: 'network', stale: true };
+    }
+    return { rateLimits: null, error: 'network' };
+  }
+
+  const usage = parseFn(result.data);
+  writeCache({ data: usage, error: !usage, source, lastSuccessAt: Date.now() });
+  return { rateLimits: usage };
+}
+
+/**
  * Get usage data (with caching)
  *
  * Returns a UsageResult with:
@@ -819,8 +1029,11 @@ export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null 
 export async function getUsage(): Promise<UsageResult> {
   const baseUrl = process.env.ANTHROPIC_BASE_URL;
   const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  const isMinimax = baseUrl != null && isMinimaxHost(baseUrl);
   const isZai = baseUrl != null && isZaiHost(baseUrl);
-  const currentSource: 'anthropic' | 'zai' = isZai && authToken ? 'zai' : 'anthropic';
+  const minimaxApiKey = process.env.MINIMAX_API_KEY || authToken;
+  const currentSource: 'anthropic' | 'zai' | 'minimax' =
+    isMinimax && minimaxApiKey ? 'minimax' : isZai && authToken ? 'zai' : 'anthropic';
   const pollIntervalMs = getUsagePollIntervalMs();
 
   // Migrate legacy single-file cache to provider-specific file (one-shot, best-effort)
@@ -838,50 +1051,26 @@ export async function getUsage(): Promise<UsageResult> {
         return getCachedUsageResult(cache);
       }
 
+      // MiniMax path (must precede z.ai and OAuth checks)
+      if (isMinimax && minimaxApiKey) {
+        return fetchAndCacheUsage({
+          source: 'minimax',
+          fetchFn: () => fetchUsageFromMinimax(minimaxApiKey),
+          parseFn: parseMinimaxResponse,
+          cache,
+          pollIntervalMs,
+        });
+      }
+
       // z.ai path (must precede OAuth check to avoid stale Anthropic credentials)
       if (isZai && authToken) {
-        const result = await fetchUsageFromZai();
-
-        if (result.rateLimited) {
-          const prevLastSuccess = cache?.lastSuccessAt;
-          const rateLimitedCache = createRateLimitedCacheEntry('zai', cache?.data || null, pollIntervalMs, cache?.rateLimitedCount || 0, prevLastSuccess);
-          writeCache({
-            data: rateLimitedCache.data,
-            error: rateLimitedCache.error,
-            source: rateLimitedCache.source,
-            rateLimited: true,
-            rateLimitedCount: rateLimitedCache.rateLimitedCount,
-            rateLimitedUntil: rateLimitedCache.rateLimitedUntil,
-            errorReason: 'rate_limited',
-            lastSuccessAt: rateLimitedCache.lastSuccessAt,
-          });
-          if (rateLimitedCache.data) {
-            if (prevLastSuccess && Date.now() - prevLastSuccess > MAX_STALE_DATA_MS) {
-              return { rateLimits: null, error: 'rate_limited' };
-            }
-            return { rateLimits: rateLimitedCache.data, error: 'rate_limited', stale: true };
-          }
-          return { rateLimits: null, error: 'rate_limited' };
-        }
-
-        if (!result.data) {
-          const fallbackData = hasUsableStaleData(cache) ? cache.data : null;
-          writeCache({
-            data: fallbackData,
-            error: true,
-            source: 'zai',
-            errorReason: 'network',
-            lastSuccessAt: cache?.lastSuccessAt,
-          });
-          if (fallbackData) {
-            return { rateLimits: fallbackData, error: 'network', stale: true };
-          }
-          return { rateLimits: null, error: 'network' };
-        }
-
-        const usage = parseZaiResponse(result.data);
-        writeCache({ data: usage, error: !usage, source: 'zai', lastSuccessAt: Date.now() });
-        return { rateLimits: usage };
+        return fetchAndCacheUsage({
+          source: 'zai',
+          fetchFn: () => fetchUsageFromZai(),
+          parseFn: parseZaiResponse,
+          cache,
+          pollIntervalMs,
+        });
       }
 
       // Anthropic OAuth path (official Claude Code support)
@@ -903,48 +1092,14 @@ export async function getUsage(): Promise<UsageResult> {
           }
         }
 
-        const result = await fetchUsageFromApi(creds.accessToken);
-
-        if (result.rateLimited) {
-          const prevLastSuccess = cache?.lastSuccessAt;
-          const rateLimitedCache = createRateLimitedCacheEntry('anthropic', cache?.data || null, pollIntervalMs, cache?.rateLimitedCount || 0, prevLastSuccess);
-          writeCache({
-            data: rateLimitedCache.data,
-            error: rateLimitedCache.error,
-            source: rateLimitedCache.source,
-            rateLimited: true,
-            rateLimitedCount: rateLimitedCache.rateLimitedCount,
-            rateLimitedUntil: rateLimitedCache.rateLimitedUntil,
-            errorReason: 'rate_limited',
-            lastSuccessAt: rateLimitedCache.lastSuccessAt,
-          });
-          if (rateLimitedCache.data) {
-            if (prevLastSuccess && Date.now() - prevLastSuccess > MAX_STALE_DATA_MS) {
-              return { rateLimits: null, error: 'rate_limited' };
-            }
-            return { rateLimits: rateLimitedCache.data, error: 'rate_limited', stale: true };
-          }
-          return { rateLimits: null, error: 'rate_limited' };
-        }
-
-        if (!result.data) {
-          const fallbackData = hasUsableStaleData(cache) ? cache.data : null;
-          writeCache({
-            data: fallbackData,
-            error: true,
-            source: 'anthropic',
-            errorReason: 'network',
-            lastSuccessAt: cache?.lastSuccessAt,
-          });
-          if (fallbackData) {
-            return { rateLimits: fallbackData, error: 'network', stale: true };
-          }
-          return { rateLimits: null, error: 'network' };
-        }
-
-        const usage = parseUsageResponse(result.data);
-        writeCache({ data: usage, error: !usage, source: 'anthropic', lastSuccessAt: Date.now() });
-        return { rateLimits: usage };
+        const accessToken = creds.accessToken;
+        return fetchAndCacheUsage({
+          source: 'anthropic',
+          fetchFn: () => fetchUsageFromApi(accessToken),
+          parseFn: parseUsageResponse,
+          cache,
+          pollIntervalMs,
+        });
       }
 
       writeCache({ data: null, error: true, source: 'anthropic', errorReason: 'no_credentials' });
