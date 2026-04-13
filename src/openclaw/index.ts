@@ -34,6 +34,7 @@ import { buildOpenClawSignal } from "./signal.js";
 import { shouldCollapseOpenClawBurst } from "./dedupe.js";
 import { basename, join } from "path";
 import { getCurrentTmuxSession } from "../notifications/tmux.js";
+import { parseTmuxTail } from "../notifications/formatter.js";
 
 /** Whether debug logging is enabled */
 const DEBUG = process.env.OMC_OPENCLAW_DEBUG === "1";
@@ -128,6 +129,10 @@ export async function wakeOpenClaw(
       } catch {
         // Non-blocking: tmux capture is best-effort
       }
+    }
+    if (tmuxTail) {
+      const parsedTmuxTail = parseTmuxTail(tmuxTail, 15);
+      tmuxTail = parsedTmuxTail || undefined;
     }
 
     // Build template variables from whitelisted context fields

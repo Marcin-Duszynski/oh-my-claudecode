@@ -447,6 +447,56 @@ describe("parseTmuxTail noise filters", () => {
       "Error: Cannot find module vitest\nfailed to load config from /tmp/x/vitest.config.ts",
     );
   });
+
+  it("drops search queries that intentionally look for alert keywords", () => {
+    const input = [
+      '❯ rg -n "error|fail|conflict|blocked" src tests',
+      "ripgrep --glob '*.ts' 'worker_notify_failed|claim_conflict' src",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("drops zero-error diagnostic summaries", () => {
+    const input = [
+      "TypeScript check passed: 0 errors, 0 warnings",
+      "totalErrors: 0, totalWarnings: 3",
+      "LSP check passed: 0 errors, 0 warnings (42 files)",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("drops regex literals that only encode alert keywords", () => {
+    const input = [
+      "const alertPattern = /error|fail|conflict|blocked/i;",
+      "matcher: new RegExp('worker_notify_failed|claim_conflict')",
+      'src/alert-monitor.ts:88: const alertPattern = /error|fail|conflict|blocked/i;',
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("drops generic hook failure prose when it is just prompt/setup residue", () => {
+    const input = [
+      "The Bash output indicates a command/setup failure that should be fixed before retrying.",
+      "Fix issue #2583: harden the live tmux keyword alert path so injected prompts stop firing fake error/fail/conflict alerts.",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("preserves actionable runtime failures next to zero-error summaries", () => {
+    const input = [
+      "TypeScript check passed: 0 errors, 0 warnings",
+      "Runtime error: tmux watcher crashed after SIGTERM",
+      "Restart the live pane monitor before rerunning diagnostics",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe(
+      "Runtime error: tmux watcher crashed after SIGTERM\nRestart the live pane monitor before rerunning diagnostics",
+    );
+  });
 });
 
 describe("tmuxTail in formatters", () => {

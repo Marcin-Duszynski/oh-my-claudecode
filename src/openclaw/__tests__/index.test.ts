@@ -45,6 +45,7 @@ import { wakeOpenClaw } from "../index.js";
 import { getOpenClawConfig, resolveGateway } from "../config.js";
 import { wakeGateway, wakeCommandGateway } from "../dispatcher.js";
 import type { OpenClawConfig } from "../types.js";
+import { parseTmuxTail } from "../../notifications/formatter.js";
 
 const mockConfig: OpenClawConfig = {
   enabled: true,
@@ -122,7 +123,12 @@ describe("wakeOpenClaw", () => {
   });
 
   it("captures fresh pane delta for stop events and passes it directly to payload", async () => {
-    const freshContent = "RuntimeError: boom\nBLOCKED: runtime failure";
+    const freshContent = [
+      '❯ rg -n "error|fail|conflict" src tests',
+      "TypeScript check passed: 0 errors, 0 warnings",
+      "RuntimeError: boom",
+      "BLOCKED: runtime failure",
+    ].join("\n");
     mockGetNewPaneTail.mockReturnValue(freshContent);
     vi.stubEnv("TMUX", "/tmp/tmux-1000/default,123,0");
     vi.stubEnv("TMUX_PANE", "%7");
@@ -138,7 +144,8 @@ describe("wakeOpenClaw", () => {
       15,
     );
     const payload = vi.mocked(wakeGateway).mock.calls[0]?.[2];
-    expect(payload.tmuxTail).toBe(freshContent);
+    expect(payload.tmuxTail).toBe(parseTmuxTail(freshContent, 15));
+    expect(payload.tmuxTail).toBe("RuntimeError: boom\nBLOCKED: runtime failure");
   });
 
   it("omits tmuxTail from stop payload when pane has no new lines", async () => {

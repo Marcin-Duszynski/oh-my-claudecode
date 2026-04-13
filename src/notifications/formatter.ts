@@ -218,6 +218,16 @@ const STATIC_HELP_CODE_RE = /^(?:log_error\s+"Usage:|if\s+\[\[.*==\s*"error".*\]
 const DIFF_HEADER_LINE_RE = /^(?:diff --git\b|index\s+[0-9a-f]{6,}\.\.[0-9a-f]{6,}\b|@@\s+[-+]\d|---\s+\S|\+\+\+\s+\S)/i;
 const STRUCTURED_ALERT_KEYWORD_RE =
   /\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts|operation_failed|claim_conflict|invalid_transition|blocked_dependency|worker_notify_failed)\b/i;
+const SEARCH_COMMAND_RE = /^(?:[$❯>#]\s*)?(?:rg|ripgrep|grep|egrep|fgrep)\b/i;
+const QUOTED_OR_REGEX_QUERY_RE = /(?:"[^"\n]+"|'[^'\n]+'|`[^`\n]+`|\/[^/\n]+\/[a-z]*)/i;
+const ZERO_ALERT_SUMMARY_RE =
+  /\b(?:0|zero)\s+(?:errors?|fail(?:ed|ures?)?|conflicts?)\b|\b(?:errors?|fail(?:ed|ures?)?|conflicts?)\s*[:=]\s*0\b|\btotalErrors\s*[:=]\s*0\b|\b(?:TypeScript|LSP)\s+check\s+passed:\s*0 errors,\s*0 warnings\b/i;
+const ALERT_REGEX_LITERAL_RE =
+  /(?:^|[=(:,]\s*)(?:new\s+RegExp\(|\/)(?=[^)\n;]*\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts|operation_failed|claim_conflict|invalid_transition|blocked_dependency|worker_notify_failed)\b)/i;
+const GENERIC_HOOK_FAILURE_PROSE_RE =
+  /^The Bash output indicates (?:a )?(?:command\/setup|command|setup) failure\b/i;
+const ISSUE_PROMPT_NOISE_RE =
+  /^(?:fix|review|investigate|analyze|search|find|look\s+for|debug|harden)\b.*\b(?:issue|pr)\s*#\d+\b.*\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts)\b/i;
 const JSONISH_LINE_RE =
   /^(?:[{[]|"(?:[^"\\]|\\.)+"\s*:|'(?:[^'\\]|\\.)+'\s*:)/;
 const REQUEST_RESPONSE_LITERAL_RE =
@@ -241,6 +251,7 @@ function trimReviewSeedPrefix(lines: string[]): string[] {
   const prefix = lines.slice(0, 10);
   const distinctOutcomes = new Set<string>();
   let hasCue = false;
+  let hasListMarker = false;
   let candidateEnd = -1;
 
   for (let index = 0; index < prefix.length; index += 1) {
@@ -254,6 +265,7 @@ function trimReviewSeedPrefix(lines: string[]): string[] {
 
     outcomeKeys.forEach((key) => distinctOutcomes.add(key));
     if (isCueLine) hasCue = true;
+    if (REVIEW_SEED_LIST_RE.test(line)) hasListMarker = true;
     if (isSeedLine) {
       candidateEnd = index;
       continue;
@@ -263,7 +275,8 @@ function trimReviewSeedPrefix(lines: string[]): string[] {
 
   const qualifies =
     candidateEnd >= 0 &&
-    (distinctOutcomes.size >= 3 || (distinctOutcomes.size >= 2 && hasCue));
+    hasCue &&
+    (distinctOutcomes.size >= 2 || hasListMarker);
 
   if (!qualifies) return lines;
   return lines.slice(candidateEnd + 1);
@@ -276,6 +289,20 @@ function looksLikeStructuredAlertLiteral(line: string): boolean {
   if (JSONISH_LINE_RE.test(trimmed)) return true;
   if (CODE_LITERAL_PREFIX_RE.test(trimmed) && /["'`{}[\]()=>]/.test(trimmed)) return true;
   return false;
+}
+
+function looksLikeAlertSearchCommand(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    SEARCH_COMMAND_RE.test(trimmed) &&
+    STRUCTURED_ALERT_KEYWORD_RE.test(trimmed) &&
+    (QUOTED_OR_REGEX_QUERY_RE.test(trimmed) || trimmed.includes("|"))
+  );
+}
+
+function looksLikeAlertRegexLiteral(line: string): boolean {
+  const trimmed = line.trim();
+  return STRUCTURED_ALERT_KEYWORD_RE.test(trimmed) && ALERT_REGEX_LITERAL_RE.test(trimmed);
 }
 
 /**
@@ -300,10 +327,19 @@ export function parseTmuxTail(raw: string, maxLines: number = DEFAULT_MAX_TAIL_L
     if (BYPASS_PERM_RE.test(trimmed)) continue;
     if (BARE_PROMPT_RE.test(trimmed)) continue;
     if (DIFF_HEADER_LINE_RE.test(trimmed)) continue;
+    if (looksLikeAlertSearchCommand(trimmed)) continue;
     if (REQUEST_RESPONSE_LITERAL_RE.test(trimmed)) continue;
     if (HELP_USAGE_LINE_RE.test(trimmed)) continue;
     if (STATIC_HELP_CODE_RE.test(trimmed)) continue;
+    if (ZERO_ALERT_SUMMARY_RE.test(trimmed)) continue;
+    if (GENERIC_HOOK_FAILURE_PROSE_RE.test(trimmed)) continue;
+    if (ISSUE_PROMPT_NOISE_RE.test(trimmed)) continue;
     if (SOURCE_PATH_LINE_RE.test(trimmed) && STATIC_CODE_ALERT_RE.test(trimmed)) continue;
+    if (SOURCE_PATH_LINE_RE.test(trimmed)) {
+      const sourceContent = trimmed.replace(SOURCE_PATH_LINE_RE, "").trim();
+      if (looksLikeStructuredAlertLiteral(sourceContent) || looksLikeAlertRegexLiteral(sourceContent)) continue;
+    }
+    if (looksLikeAlertRegexLiteral(trimmed)) continue;
     if (looksLikeStructuredAlertLiteral(trimmed)) continue;
 
     // Alphanumeric density check: drop lines mostly composed of special characters

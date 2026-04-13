@@ -293,6 +293,41 @@ describe("notify() -> session-registry integration", () => {
     expect(body.content).not.toContain('+ const payload = { status: "failed", error: "claim_conflict" };');
   });
 
+  it("filters live pane prompt/search/diagnostic residue while keeping actionable failures", async () => {
+    mockShouldIncludeTmuxTail.mockReturnValue(true);
+    mockGetTmuxTailLines.mockReturnValue(12);
+    mockGetNewPaneTail.mockReturnValue([
+      "Fix issue #2583: stop fake error/fail/conflict alerts from prompt residue",
+      '❯ rg -n "error|fail|conflict" src tests',
+      "TypeScript check passed: 0 errors, 0 warnings",
+      "The Bash output indicates a command/setup failure that should be fixed before retrying.",
+      "Runtime error: worker crashed after SIGTERM",
+      "Restart the pane watcher and rerun the task",
+    ].join("\n"));
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "discord-msg-live-pane-filter" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await notify("session-idle", {
+      sessionId: "sess-live-pane-filter",
+      projectPath: "/test/project",
+    });
+
+    expect(result).not.toBeNull();
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, { body?: string }];
+    const body = JSON.parse(requestInit.body ?? "{}") as { content?: string };
+    expect(body.content).toContain("Runtime error: worker crashed after SIGTERM");
+    expect(body.content).toContain("Restart the pane watcher and rerun the task");
+    expect(body.content).not.toContain("Fix issue #2583");
+    expect(body.content).not.toContain('rg -n "error|fail|conflict"');
+    expect(body.content).not.toContain("0 errors, 0 warnings");
+    expect(body.content).not.toContain("The Bash output indicates a command/setup failure");
+  });
+
   it("does NOT register when tmuxPaneId is unavailable", async () => {
     mockGetCurrentTmuxPaneId.mockReturnValue(null);
 
