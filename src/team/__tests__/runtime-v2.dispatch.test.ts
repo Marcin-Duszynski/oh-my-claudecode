@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { promisify } from 'util';
+import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 
 import { listDispatchRequests } from '../dispatch-queue.js';
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   sendToWorker: vi.fn(),
   waitForPaneReady: vi.fn(),
   applyMainVerticalLayout: vi.fn(),
+  killTeamSession: vi.fn(async () => {}),
   execFile: vi.fn(),
   spawnSync: vi.fn(() => ({ status: 0 })),
   tmuxExecAsync: vi.fn(),
@@ -51,13 +53,18 @@ vi.mock('../model-contract.js', () => ({
   resolveClaudeWorkerModel: vi.fn(() => undefined),
 }));
 
-vi.mock('../tmux-session.js', () => ({
-  createTeamSession: mocks.createTeamSession,
-  spawnWorkerInPane: mocks.spawnWorkerInPane,
-  sendToWorker: mocks.sendToWorker,
-  waitForPaneReady: mocks.waitForPaneReady,
-  applyMainVerticalLayout: mocks.applyMainVerticalLayout,
-}));
+vi.mock('../tmux-session.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../tmux-session.js')>();
+  return {
+    ...actual,
+    createTeamSession: mocks.createTeamSession,
+    spawnWorkerInPane: mocks.spawnWorkerInPane,
+    sendToWorker: mocks.sendToWorker,
+    waitForPaneReady: mocks.waitForPaneReady,
+    applyMainVerticalLayout: mocks.applyMainVerticalLayout,
+    killTeamSession: mocks.killTeamSession,
+  };
+});
 
 describe('runtime v2 startup inbox dispatch', () => {
   let cwd: string;
@@ -70,6 +77,8 @@ describe('runtime v2 startup inbox dispatch', () => {
     mocks.sendToWorker.mockReset();
     mocks.waitForPaneReady.mockReset();
     mocks.applyMainVerticalLayout.mockReset();
+    mocks.killTeamSession.mockReset();
+    mocks.killTeamSession.mockResolvedValue(undefined);
     mocks.execFile.mockReset();
     mocks.spawnSync.mockReset();
     modelContractMocks.buildWorkerArgv.mockReset();
@@ -169,6 +178,133 @@ describe('runtime v2 startup inbox dispatch', () => {
       }),
     );
     expect(mocks.applyMainVerticalLayout).toHaveBeenCalledWith('dispatch-session');
+  });
+
+
+  it('persists runtime-v2 worktree contract fields for split-pane teams', async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-worktree-contract-'));
+    execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd, stdio: 'pipe' });
+    await writeFile(join(cwd, 'README.md'), 'worktree contract test\n', 'utf-8');
+    execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'pipe' });
+
+    const { startTeamV2 } = await import('../runtime-v2.js');
+
+    const runtime = await startTeamV2({
+      teamName: 'dispatch-team',
+      workerCount: 1,
+      agentTypes: ['claude'],
+      pluginConfig: { team: { ops: { worktreeMode: 'named' } } },
+      tasks: [{ subject: 'Worktree contract', description: 'Verify runtime-v2 worktree metadata' }],
+      cwd,
+    });
+
+    expect(runtime.ownsWindow).toBe(false);
+    expect(runtime.config.workspace_mode).toBe('worktree');
+    expect(runtime.config.worktree_mode).toBe('named');
+    expect(runtime.config.workers[0]).toMatchObject({
+      working_dir: join(cwd, '.omc', 'team', 'dispatch-team', 'worktrees', 'worker-1'),
+      worktree_repo_root: cwd,
+      worktree_branch: 'omc-team/dispatch-team/worker-1',
+      worktree_detached: false,
+      worktree_created: true,
+    });
+
+    const configPath = join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'config.json');
+    const manifestPath = join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'manifest.json');
+    const persisted = JSON.parse(await readFile(configPath, 'utf-8'));
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+    expect(persisted.workspace_mode).toBe('worktree');
+    expect(persisted.worktree_mode).toBe('named');
+    expect(manifest.workspace_mode).toBe('worktree');
+    expect(manifest.worktree_mode).toBe('named');
+
+    const requests = await listDispatchRequests('dispatch-team', cwd, { kind: 'inbox' });
+    expect(requests[0]?.trigger_message).toContain('$OMC_TEAM_STATE_ROOT/workers/worker-1/inbox.md');
+    expect(requests[0]?.trigger_message).not.toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team');
+    expect(runtime.config.team_state_root).toBeDefined();
+    const teamStateRoot = runtime.config.team_state_root!;
+    expect(requests[0]?.trigger_message.replace('$OMC_TEAM_STATE_ROOT', teamStateRoot))
+      .toContain(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'workers', 'worker-1', 'inbox.md'));
+
+    const overlay = await readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'workers', 'worker-1', 'AGENTS.md'), 'utf-8');
+    expect(overlay).toContain('$OMC_TEAM_STATE_ROOT/workers/worker-1/status.json');
+    expect(overlay).not.toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team');
+  });
+
+
+  it('kills the started team session and rolls back worktrees when manifest persistence fails', async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-post-session-rollback-'));
+    execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd, stdio: 'pipe' });
+    await writeFile(join(cwd, 'README.md'), 'post-session rollback test\n', 'utf-8');
+    execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'pipe' });
+    mocks.createTeamSession.mockResolvedValueOnce({
+      sessionName: 'dispatch-window',
+      leaderPaneId: '%1',
+      workerPaneIds: [],
+      sessionMode: 'dedicated-window',
+    });
+    await mkdir(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'manifest.json'), { recursive: true });
+
+    const { startTeamV2 } = await import('../runtime-v2.js');
+
+    await expect(startTeamV2({
+      teamName: 'dispatch-team',
+      workerCount: 1,
+      agentTypes: ['claude'],
+      pluginConfig: { team: { ops: { worktreeMode: 'named' } } },
+      tasks: [{ subject: 'Worktree rollback', description: 'Fail after tmux session starts' }],
+      cwd,
+      newWindow: true,
+    })).rejects.toThrow();
+
+    expect(mocks.killTeamSession).toHaveBeenCalledWith(
+      'dispatch-window',
+      [],
+      '%1',
+      { sessionMode: 'dedicated-window' },
+    );
+    await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'config.json'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'worktrees.json'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(cwd, '.omc', 'team', 'dispatch-team', 'worktrees', 'worker-1', 'AGENTS.md'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+
+  it('rolls back clean native worktrees when startup fails before config is persisted', async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-worktree-rollback-'));
+    execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd, stdio: 'pipe' });
+    await writeFile(join(cwd, 'README.md'), 'worktree rollback test\n', 'utf-8');
+    execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'pipe' });
+    mocks.createTeamSession.mockRejectedValueOnce(new Error('tmux_start_failed'));
+
+    const { startTeamV2 } = await import('../runtime-v2.js');
+
+    await expect(startTeamV2({
+      teamName: 'dispatch-team',
+      workerCount: 1,
+      agentTypes: ['claude'],
+      pluginConfig: { team: { ops: { worktreeMode: 'named' } } },
+      tasks: [{ subject: 'Worktree rollback', description: 'Fail before config persists' }],
+      cwd,
+    })).rejects.toThrow('tmux_start_failed');
+
+    await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'config.json'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'worktrees.json'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(cwd, '.omc', 'team', 'dispatch-team', 'worktrees', 'worker-1', 'AGENTS.md'), 'utf-8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
   });
 
 
@@ -420,10 +556,10 @@ describe('runtime v2 startup inbox dispatch', () => {
     expect(mocks.sendToWorker).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps codex prompt-mode launch args to a short inbox pointer and waits for claim evidence', async () => {
-    cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-codex-prompt-'));
+  it('keeps gemini prompt-mode launch args to a short inbox pointer and waits for claim evidence', async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-gemini-prompt-'));
 
-    modelContractMocks.isPromptModeAgent.mockImplementation((agentType?: string) => agentType === 'codex');
+    modelContractMocks.isPromptModeAgent.mockImplementation((agentType?: string) => agentType === 'gemini');
     mocks.spawnWorkerInPane.mockImplementation(async () => {
       const taskDir = join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'tasks');
       const canonicalTaskPath = join(taskDir, 'task-1.json');
@@ -447,7 +583,7 @@ describe('runtime v2 startup inbox dispatch', () => {
     const runtime = await startTeamV2({
       teamName: 'dispatch-team',
       workerCount: 1,
-      agentTypes: ['codex'],
+      agentTypes: ['gemini'],
       tasks: [{
         subject: 'Dispatch test',
         description: 'Reviewer seed says the worker may be blocked; verify prompt echo stays quiet.',
@@ -456,7 +592,7 @@ describe('runtime v2 startup inbox dispatch', () => {
     });
 
     expect(modelContractMocks.getPromptModeArgs).toHaveBeenCalledWith(
-      'codex',
+      'gemini',
       expect.stringContaining('.omc/state/team/dispatch-team/workers/worker-1/inbox.md'),
     );
     const promptModeInstruction = modelContractMocks.getPromptModeArgs.mock.calls[0]?.[1];
@@ -469,7 +605,7 @@ describe('runtime v2 startup inbox dispatch', () => {
       'dispatch-session',
       '%2',
       expect.objectContaining({
-        launchBinary: '/usr/bin/codex',
+        launchBinary: '/usr/bin/gemini',
         launchArgs: expect.arrayContaining([
           expect.stringContaining('.omc/state/team/dispatch-team/workers/worker-1/inbox.md'),
         ]),
