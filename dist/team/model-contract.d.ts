@@ -1,4 +1,4 @@
-export type CliAgentType = 'claude' | 'codex' | 'gemini' | 'cursor';
+export type CliAgentType = "claude" | "codex" | "gemini" | "cursor";
 export interface CliAgentContract {
     agentType: CliAgentType;
     binary: string;
@@ -9,6 +9,20 @@ export interface CliAgentContract {
     supportsPromptMode?: boolean;
     /** CLI flag for prompt mode (e.g., '-p' for gemini) */
     promptModeFlag?: string;
+}
+export type TeamReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export interface ParsedTeamWorkerLaunchArgs {
+    passthrough: string[];
+    wantsBypass: boolean;
+    reasoningOverride: string | null;
+    modelProviderOverride: string | null;
+    modelOverride: string | null;
+}
+export interface ResolveTeamWorkerLaunchArgsOptions {
+    existingRaw?: string;
+    inheritedArgs?: string[];
+    fallbackModel?: string;
+    preferredReasoning?: TeamReasoningEffort;
 }
 export interface WorkerLaunchConfig {
     teamName: string;
@@ -48,6 +62,15 @@ export declare const _testInternals: {
     UNTRUSTED_PATH_PATTERNS: RegExp[];
     getTrustedPrefixes: typeof getTrustedPrefixes;
 };
+export declare function splitWorkerLaunchArgs(raw: string | undefined): string[];
+export declare function parseTeamWorkerLaunchArgs(args: string[]): ParsedTeamWorkerLaunchArgs;
+export declare function collectInheritableTeamWorkerArgs(workerArgs: string[]): string[];
+export declare function normalizeTeamWorkerLaunchArgs(args: string[], preferredModel?: string, preferredReasoning?: TeamReasoningEffort, preferredModelProviderOverride?: string): string[];
+export declare function resolveTeamWorkerLaunchArgs(options: ResolveTeamWorkerLaunchArgsOptions): string[];
+export declare function isLowComplexityAgentType(agentType?: string): boolean;
+export declare function resolveAgentReasoningEffort(agentType?: string): TeamReasoningEffort | undefined;
+export declare function resolveAgentDefaultModel(agentType?: string): string | undefined;
+export declare function resolveWorkerLaunchExtraFlags(env?: NodeJS.ProcessEnv, inheritedArgs?: string[], fallbackModel?: string, preferredReasoning?: TeamReasoningEffort): string[];
 /**
  * Detect parent launch env for Claude Code API-key auth.
  *

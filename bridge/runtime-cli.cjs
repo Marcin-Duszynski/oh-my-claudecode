@@ -2707,11 +2707,7 @@ var UNTRUSTED_PATH_PATTERNS = [
   /^\/dev\/shm(\/|$)/
 ];
 function getTrustedPrefixes() {
-  const trusted = [
-    "/usr/local/bin",
-    "/usr/bin",
-    "/opt/homebrew/"
-  ];
+  const trusted = ["/usr/local/bin", "/usr/bin", "/opt/homebrew/"];
   const home = process.env.HOME;
   if (home) {
     trusted.push(`${home}/.local/bin`);
@@ -2724,7 +2720,9 @@ function getTrustedPrefixes() {
 }
 function isTrustedPrefix(resolvedPath) {
   const normalized = (0, import_path7.normalize)(resolvedPath);
-  return getTrustedPrefixes().some((prefix) => normalized.startsWith((0, import_path7.normalize)(prefix)));
+  return getTrustedPrefixes().some(
+    (prefix) => normalized.startsWith((0, import_path7.normalize)(prefix))
+  );
 }
 function assertBinaryName(binary) {
   if (!/^[A-Za-z0-9._-]+$/.test(binary)) {
@@ -2753,13 +2751,174 @@ function resolveCliBinaryPath(binary) {
     throw new Error(`Resolved CLI binary '${binary}' to relative path`);
   }
   if (UNTRUSTED_PATH_PATTERNS.some((pattern) => pattern.test(resolvedPath))) {
-    throw new Error(`Resolved CLI binary '${binary}' to untrusted location: ${resolvedPath}`);
+    throw new Error(
+      `Resolved CLI binary '${binary}' to untrusted location: ${resolvedPath}`
+    );
   }
   if (!isTrustedPrefix(resolvedPath)) {
-    console.warn(`[omc:cli-security] CLI binary '${binary}' resolved to non-standard path: ${resolvedPath}`);
+    console.warn(
+      `[omc:cli-security] CLI binary '${binary}' resolved to non-standard path: ${resolvedPath}`
+    );
   }
   resolvedPathCache.set(binary, resolvedPath);
   return resolvedPath;
+}
+var MADMAX_FLAG = "--madmax";
+var CODEX_BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox";
+var MODEL_FLAG = "--model";
+var CONFIG_FLAG = "-c";
+var REASONING_KEY = "model_reasoning_effort";
+var MODEL_PROVIDER_KEY = "model_provider";
+var ROLE_REASONING_DEFAULTS = {
+  explore: "low",
+  writer: "low",
+  executor: "medium",
+  debugger: "medium",
+  "test-engineer": "medium",
+  verifier: "medium",
+  designer: "medium",
+  "security-reviewer": "medium",
+  architect: "high",
+  planner: "high",
+  analyst: "high",
+  critic: "high",
+  "code-reviewer": "high",
+  "code-simplifier": "high"
+};
+function isConfigOverrideForKey(value, key) {
+  return new RegExp(`^${key}\\s*=`).test(value.trim());
+}
+function isReasoningOverride(value) {
+  return isConfigOverrideForKey(value, REASONING_KEY);
+}
+function isModelProviderOverride(value) {
+  return isConfigOverrideForKey(value, MODEL_PROVIDER_KEY);
+}
+function isValidModelValue2(value) {
+  return value.trim().length > 0 && !value.startsWith("-");
+}
+function normalizeOptionalModel(model) {
+  if (typeof model !== "string") return void 0;
+  const trimmed = model.trim();
+  return trimmed.length > 0 ? trimmed : void 0;
+}
+function normalizeOptionalReasoning(reasoning) {
+  if (typeof reasoning !== "string") return void 0;
+  const normalized = reasoning.trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh") {
+    return normalized;
+  }
+  return void 0;
+}
+function normalizeRoleName(agentType) {
+  const normalized = agentType?.trim().toLowerCase();
+  return normalized ? normalized : void 0;
+}
+function splitWorkerLaunchArgs(raw) {
+  if (!raw || raw.trim() === "") return [];
+  return raw.split(/\s+/).map((part) => part.trim()).filter(Boolean);
+}
+function parseTeamWorkerLaunchArgs(args) {
+  const passthrough = [];
+  let wantsBypass = false;
+  let reasoningOverride = null;
+  let modelProviderOverride = null;
+  let modelOverride = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === CODEX_BYPASS_FLAG || arg === MADMAX_FLAG) {
+      wantsBypass = true;
+      continue;
+    }
+    if (arg === MODEL_FLAG) {
+      const maybeValue = args[i + 1];
+      if (typeof maybeValue === "string" && isValidModelValue2(maybeValue)) {
+        modelOverride = maybeValue.trim();
+        i += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith(`${MODEL_FLAG}=`)) {
+      const inlineValue = arg.slice(`${MODEL_FLAG}=`.length).trim();
+      if (isValidModelValue2(inlineValue)) {
+        modelOverride = inlineValue;
+      }
+      continue;
+    }
+    if (arg === CONFIG_FLAG) {
+      const maybeValue = args[i + 1];
+      if (typeof maybeValue === "string" && isReasoningOverride(maybeValue)) {
+        reasoningOverride = maybeValue;
+        i += 1;
+        continue;
+      }
+      if (typeof maybeValue === "string" && isModelProviderOverride(maybeValue)) {
+        modelProviderOverride = maybeValue;
+        i += 1;
+        continue;
+      }
+    }
+    passthrough.push(arg);
+  }
+  return {
+    passthrough,
+    wantsBypass,
+    reasoningOverride,
+    modelProviderOverride,
+    modelOverride
+  };
+}
+function normalizeTeamWorkerLaunchArgs(args, preferredModel, preferredReasoning, preferredModelProviderOverride) {
+  const parsed = parseTeamWorkerLaunchArgs(args);
+  const normalized = [...parsed.passthrough];
+  if (parsed.wantsBypass) normalized.push(CODEX_BYPASS_FLAG);
+  const reasoning = parsed.reasoningOverride ?? (normalizeOptionalReasoning(preferredReasoning) ? `${REASONING_KEY}="${normalizeOptionalReasoning(preferredReasoning)}"` : null);
+  const modelProvider = preferredModelProviderOverride ?? parsed.modelProviderOverride;
+  if (modelProvider) normalized.push(CONFIG_FLAG, modelProvider);
+  if (reasoning) normalized.push(CONFIG_FLAG, reasoning);
+  const selectedModel = normalizeOptionalModel(preferredModel) ?? normalizeOptionalModel(parsed.modelOverride);
+  if (selectedModel) normalized.push(MODEL_FLAG, selectedModel);
+  return normalized;
+}
+function resolveTeamWorkerLaunchArgs(options) {
+  const envArgs = splitWorkerLaunchArgs(options.existingRaw);
+  const inheritedArgs = options.inheritedArgs ?? [];
+  const allArgs = [...envArgs, ...inheritedArgs];
+  const envParsed = parseTeamWorkerLaunchArgs(envArgs);
+  const inheritedParsed = parseTeamWorkerLaunchArgs(inheritedArgs);
+  const selectedModel = normalizeOptionalModel(envParsed.modelOverride) ?? normalizeOptionalModel(inheritedParsed.modelOverride) ?? normalizeOptionalModel(options.fallbackModel);
+  const selectedModelProvider = envParsed.modelProviderOverride ?? inheritedParsed.modelProviderOverride ?? void 0;
+  return normalizeTeamWorkerLaunchArgs(
+    allArgs,
+    selectedModel,
+    options.preferredReasoning,
+    selectedModelProvider
+  );
+}
+function resolveAgentReasoningEffort(agentType) {
+  const normalized = normalizeRoleName(agentType);
+  if (!normalized) return void 0;
+  return ROLE_REASONING_DEFAULTS[normalized];
+}
+function contractExtraFlags(agentType, extraFlags, model) {
+  const parsed = parseTeamWorkerLaunchArgs(extraFlags ?? []);
+  const selectedModel = normalizeOptionalModel(parsed.modelOverride) ?? normalizeOptionalModel(model);
+  const passthrough = [...parsed.passthrough];
+  if (agentType === "codex" && parsed.modelProviderOverride)
+    passthrough.push(CONFIG_FLAG, parsed.modelProviderOverride);
+  if (agentType === "codex" && parsed.reasoningOverride)
+    passthrough.push(CONFIG_FLAG, parsed.reasoningOverride);
+  if (parsed.wantsBypass && agentType !== "codex")
+    passthrough.push(CODEX_BYPASS_FLAG);
+  return { model: selectedModel, extraFlags: passthrough };
+}
+function resolveWorkerLaunchExtraFlags(env = process.env, inheritedArgs = [], fallbackModel, preferredReasoning) {
+  return resolveTeamWorkerLaunchArgs({
+    existingRaw: env.OMC_TEAM_WORKER_LAUNCH_ARGS,
+    inheritedArgs,
+    fallbackModel,
+    preferredReasoning
+  });
 }
 function shouldUseClaudeBareMode(env = process.env) {
   return typeof env.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.trim().length > 0;
@@ -2849,7 +3008,9 @@ var CONTRACTS = {
 function getContract(agentType) {
   const contract = CONTRACTS[agentType];
   if (!contract) {
-    throw new Error(`Unknown agent type: ${agentType}. Supported: ${Object.keys(CONTRACTS).join(", ")}`);
+    throw new Error(
+      `Unknown agent type: ${agentType}. Supported: ${Object.keys(CONTRACTS).join(", ")}`
+    );
   }
   if (agentType !== "claude" && isExternalLLMDisabled()) {
     throw new Error(
@@ -2868,7 +3029,10 @@ function resolveBinaryPath(binary) {
   if ((0, import_path7.isAbsolute)(binary)) return binary;
   try {
     const resolver = process.platform === "win32" ? "where" : "which";
-    const result = (0, import_child_process2.spawnSync)(resolver, [binary], { timeout: 5e3, encoding: "utf8" });
+    const result = (0, import_child_process2.spawnSync)(resolver, [binary], {
+      timeout: 5e3,
+      encoding: "utf8"
+    });
     if (result.status !== 0) return binary;
     const lines = result.stdout?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) ?? [];
     const firstPath = lines[0];
@@ -2883,7 +3047,15 @@ function resolveValidatedBinaryPath(agentType) {
   return resolveCliBinaryPath(contract.binary);
 }
 function buildLaunchArgs(agentType, config) {
-  return getContract(agentType).buildLaunchArgs(config.model, config.extraFlags);
+  const prepared = contractExtraFlags(
+    agentType,
+    config.extraFlags,
+    config.model
+  );
+  return getContract(agentType).buildLaunchArgs(
+    prepared.model,
+    prepared.extraFlags
+  );
 }
 function buildWorkerArgv(agentType, config) {
   validateTeamName(config.teamName);
@@ -4005,75 +4177,95 @@ async function writeTask(root, task) {
   await writeJson(taskPath(root, task.id), task);
 }
 async function markTaskInProgress(root, taskId, owner, teamName, cwd) {
-  const result = await withTaskLock(teamName, taskId, async () => {
-    const task = await readTask(root, taskId);
-    if (!task || task.status !== "pending") return false;
-    task.status = "in_progress";
-    task.owner = owner;
-    task.assignedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeTask(root, task);
-    return true;
-  }, { cwd });
+  const result = await withTaskLock(
+    teamName,
+    taskId,
+    async () => {
+      const task = await readTask(root, taskId);
+      if (!task || task.status !== "pending") return false;
+      task.status = "in_progress";
+      task.owner = owner;
+      task.assignedAt = (/* @__PURE__ */ new Date()).toISOString();
+      await writeTask(root, task);
+      return true;
+    },
+    { cwd }
+  );
   return result ?? false;
 }
 async function resetTaskToPending(root, taskId, teamName, cwd) {
-  await withTaskLock(teamName, taskId, async () => {
-    const task = await readTask(root, taskId);
-    if (!task) return;
-    task.status = "pending";
-    task.owner = null;
-    task.assignedAt = void 0;
-    await writeTask(root, task);
-  }, { cwd });
+  await withTaskLock(
+    teamName,
+    taskId,
+    async () => {
+      const task = await readTask(root, taskId);
+      if (!task) return;
+      task.status = "pending";
+      task.owner = null;
+      task.assignedAt = void 0;
+      await writeTask(root, task);
+    },
+    { cwd }
+  );
 }
 async function markTaskFromDone(root, teamName, cwd, taskId, status, summary) {
-  await withTaskLock(teamName, taskId, async () => {
-    const task = await readTask(root, taskId);
-    if (!task) return;
-    task.status = status;
-    task.result = summary;
-    task.summary = summary;
-    if (status === "completed") {
-      task.completedAt = (/* @__PURE__ */ new Date()).toISOString();
-    } else {
-      task.failedAt = (/* @__PURE__ */ new Date()).toISOString();
-    }
-    await writeTask(root, task);
-  }, { cwd });
+  await withTaskLock(
+    teamName,
+    taskId,
+    async () => {
+      const task = await readTask(root, taskId);
+      if (!task) return;
+      task.status = status;
+      task.result = summary;
+      task.summary = summary;
+      if (status === "completed") {
+        task.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+      } else {
+        task.failedAt = (/* @__PURE__ */ new Date()).toISOString();
+      }
+      await writeTask(root, task);
+    },
+    { cwd }
+  );
 }
 async function applyDeadPaneTransition(runtime, workerNameValue, taskId) {
   const root = stateRoot(runtime.cwd, runtime.teamName);
-  const transition = await withTaskLock(runtime.teamName, taskId, async () => {
-    const task = await readTask(root, taskId);
-    if (!task) return { action: "skipped" };
-    if (task.status === "completed" || task.status === "failed") {
-      return { action: "skipped" };
-    }
-    if (task.status !== "in_progress" || task.owner !== workerNameValue) {
-      return { action: "skipped" };
-    }
-    const failure = await writeTaskFailure(
-      runtime.teamName,
-      taskId,
-      `Worker pane died before done.json was written (${workerNameValue})`,
-      { cwd: runtime.cwd }
-    );
-    const retryCount = failure.retryCount;
-    if (retryCount >= DEFAULT_MAX_TASK_RETRIES) {
-      task.status = "failed";
-      task.owner = workerNameValue;
-      task.summary = `Worker pane died before done.json was written (${workerNameValue})`;
-      task.result = task.summary;
-      task.failedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const transition = await withTaskLock(
+    runtime.teamName,
+    taskId,
+    async () => {
+      const task = await readTask(root, taskId);
+      if (!task) return { action: "skipped" };
+      if (task.status === "completed" || task.status === "failed") {
+        return { action: "skipped" };
+      }
+      if (task.status !== "in_progress" || task.owner !== workerNameValue) {
+        return { action: "skipped" };
+      }
+      const failure = await writeTaskFailure(
+        runtime.teamName,
+        taskId,
+        `Worker pane died before done.json was written (${workerNameValue})`,
+        { cwd: runtime.cwd }
+      );
+      const retryCount = failure.retryCount;
+      if (retryCount >= DEFAULT_MAX_TASK_RETRIES) {
+        task.status = "failed";
+        task.owner = workerNameValue;
+        task.summary = `Worker pane died before done.json was written (${workerNameValue})`;
+        task.result = task.summary;
+        task.failedAt = (/* @__PURE__ */ new Date()).toISOString();
+        await writeTask(root, task);
+        return { action: "failed", retryCount };
+      }
+      task.status = "pending";
+      task.owner = null;
+      task.assignedAt = void 0;
       await writeTask(root, task);
-      return { action: "failed", retryCount };
-    }
-    task.status = "pending";
-    task.owner = null;
-    task.assignedAt = void 0;
-    await writeTask(root, task);
-    return { action: "requeued", retryCount };
-  }, { cwd: runtime.cwd });
+      return { action: "requeued", retryCount };
+    },
+    { cwd: runtime.cwd }
+  );
   return transition ?? { action: "skipped" };
 }
 async function nextPendingTaskIndex(runtime) {
@@ -4085,7 +4277,9 @@ async function nextPendingTaskIndex(runtime) {
     let task = await readTask(root, taskId);
     if (!task) {
       for (let attempt = 1; attempt < transientReadRetryAttempts; attempt++) {
-        await new Promise((resolve6) => setTimeout(resolve6, transientReadRetryDelayMs));
+        await new Promise(
+          (resolve6) => setTimeout(resolve6, transientReadRetryDelayMs)
+        );
         task = await readTask(root, taskId);
         if (task) break;
       }
@@ -4163,7 +4357,11 @@ async function startTeam(config) {
       teamName,
       workerName: wName,
       agentType,
-      tasks: tasks.map((t, idx) => ({ id: String(idx + 1), subject: t.subject, description: t.description })),
+      tasks: tasks.map((t, idx) => ({
+        id: String(idx + 1),
+        subject: t.subject,
+        description: t.description
+      })),
       cwd
     });
   }
@@ -4208,7 +4406,9 @@ async function monitorTeam(teamName, cwd, workerPaneIds) {
     const { readdir: readdir2 } = await import("fs/promises");
     const taskFiles = await readdir2((0, import_path14.join)(root, "tasks"));
     for (const f of taskFiles.filter((f2) => f2.endsWith(".json"))) {
-      const task = await readJsonSafe((0, import_path14.join)(root, "tasks", f));
+      const task = await readJsonSafe(
+        (0, import_path14.join)(root, "tasks", f)
+      );
       if (task?.status === "pending") taskCounts.pending++;
       else if (task?.status === "in_progress") taskCounts.inProgress++;
       else if (task?.status === "completed") taskCounts.completed++;
@@ -4278,10 +4478,12 @@ function watchdogCliWorkers(runtime, intervalMs) {
       if (workers.length === 0) return;
       const root = stateRoot(runtime.cwd, runtime.teamName);
       const [doneSignals, aliveResults] = await Promise.all([
-        Promise.all(workers.map(([wName]) => {
-          const donePath = (0, import_path14.join)(root, "workers", wName, "done.json");
-          return readJsonSafe(donePath);
-        })),
+        Promise.all(
+          workers.map(([wName]) => {
+            const donePath = (0, import_path14.join)(root, "workers", wName, "done.json");
+            return readJsonSafe(donePath);
+          })
+        ),
         Promise.all(workers.map(([, active]) => isWorkerAlive(active.paneId)))
       ]);
       for (let i = 0; i < workers.length; i++) {
@@ -4290,7 +4492,14 @@ function watchdogCliWorkers(runtime, intervalMs) {
         const signal = doneSignals[i];
         if (signal) {
           unresponsiveCounts.delete(wName);
-          await markTaskFromDone(root, runtime.teamName, runtime.cwd, signal.taskId || active.taskId, signal.status, signal.summary);
+          await markTaskFromDone(
+            root,
+            runtime.teamName,
+            runtime.cwd,
+            signal.taskId || active.taskId,
+            signal.status,
+            signal.summary
+          );
           try {
             const { unlink: unlink4 } = await import("fs/promises");
             await unlink4(donePath);
@@ -4308,10 +4517,16 @@ function watchdogCliWorkers(runtime, intervalMs) {
         const alive = aliveResults[i];
         if (!alive) {
           unresponsiveCounts.delete(wName);
-          const transition = await applyDeadPaneTransition(runtime, wName, active.taskId);
+          const transition = await applyDeadPaneTransition(
+            runtime,
+            wName,
+            active.taskId
+          );
           if (transition.action === "requeued") {
             const retryCount = transition.retryCount ?? 1;
-            console.warn(`[watchdog] worker ${wName} dead pane \u2014 requeuing task ${active.taskId} (retry ${retryCount}/${DEFAULT_MAX_TASK_RETRIES})`);
+            console.warn(
+              `[watchdog] worker ${wName} dead pane \u2014 requeuing task ${active.taskId} (retry ${retryCount}/${DEFAULT_MAX_TASK_RETRIES})`
+            );
           }
           await killWorkerPane(runtime, wName, active.paneId);
           if (!await allTasksTerminal(runtime)) {
@@ -4323,19 +4538,31 @@ function watchdogCliWorkers(runtime, intervalMs) {
           continue;
         }
         const heartbeatPath = (0, import_path14.join)(root, "workers", wName, "heartbeat.json");
-        const heartbeat = await readJsonSafe(heartbeatPath);
+        const heartbeat = await readJsonSafe(
+          heartbeatPath
+        );
         const isStalled = heartbeat?.updatedAt ? Date.now() - new Date(heartbeat.updatedAt).getTime() > 6e4 : false;
         if (isStalled) {
           const count = (unresponsiveCounts.get(wName) ?? 0) + 1;
           unresponsiveCounts.set(wName, count);
           if (count < UNRESPONSIVE_KILL_THRESHOLD) {
-            console.warn(`[watchdog] worker ${wName} unresponsive (${count}/${UNRESPONSIVE_KILL_THRESHOLD}), task ${active.taskId}`);
+            console.warn(
+              `[watchdog] worker ${wName} unresponsive (${count}/${UNRESPONSIVE_KILL_THRESHOLD}), task ${active.taskId}`
+            );
           } else {
-            console.warn(`[watchdog] worker ${wName} unresponsive ${count} consecutive ticks \u2014 killing and reassigning task ${active.taskId}`);
+            console.warn(
+              `[watchdog] worker ${wName} unresponsive ${count} consecutive ticks \u2014 killing and reassigning task ${active.taskId}`
+            );
             unresponsiveCounts.delete(wName);
-            const transition = await applyDeadPaneTransition(runtime, wName, active.taskId);
+            const transition = await applyDeadPaneTransition(
+              runtime,
+              wName,
+              active.taskId
+            );
             if (transition.action === "requeued") {
-              console.warn(`[watchdog] worker ${wName} stall-killed \u2014 requeuing task ${active.taskId} (retry ${transition.retryCount}/${DEFAULT_MAX_TASK_RETRIES})`);
+              console.warn(
+                `[watchdog] worker ${wName} stall-killed \u2014 requeuing task ${active.taskId} (retry ${transition.retryCount}/${DEFAULT_MAX_TASK_RETRIES})`
+              );
             }
             await killWorkerPane(runtime, wName, active.paneId);
             if (!await allTasksTerminal(runtime)) {
@@ -4354,7 +4581,9 @@ function watchdogCliWorkers(runtime, intervalMs) {
       consecutiveFailures++;
       console.warn("[watchdog] tick error:", err);
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        console.warn(`[watchdog] ${consecutiveFailures} consecutive failures \u2014 marking team as failed`);
+        console.warn(
+          `[watchdog] ${consecutiveFailures} consecutive failures \u2014 marking team as failed`
+        );
         try {
           const root = stateRoot(runtime.cwd, runtime.teamName);
           await writeJson((0, import_path14.join)(root, "watchdog-failed.json"), {
@@ -4380,7 +4609,13 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
   const taskId = String(taskIndex + 1);
   const task = runtime.config.tasks[taskIndex];
   if (!task) return "";
-  const marked = await markTaskInProgress(root, taskId, workerNameValue, runtime.teamName, runtime.cwd);
+  const marked = await markTaskInProgress(
+    root,
+    taskId,
+    workerNameValue,
+    runtime.teamName,
+    runtime.cwd
+  );
   if (!marked) return "";
   const splitTarget = runtime.workerPaneIds.length === 0 ? runtime.leaderPaneId : runtime.workerPaneIds[runtime.workerPaneIds.length - 1];
   const splitType = runtime.workerPaneIds.length === 0 ? "-h" : "-v";
@@ -4407,9 +4642,23 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
   const workerIndex = parseWorkerIndex(workerNameValue);
   const agentType = runtime.config.agentTypes[workerIndex % runtime.config.agentTypes.length] ?? runtime.config.agentTypes[0] ?? "claude";
   const usePromptMode = isPromptModeAgent(agentType);
-  const instruction = buildInitialTaskInstruction(runtime.teamName, workerNameValue, task, taskId);
-  await composeInitialInbox(runtime.teamName, workerNameValue, instruction, runtime.cwd);
-  const envVars = getWorkerEnv(runtime.teamName, workerNameValue, agentType);
+  const instruction = buildInitialTaskInstruction(
+    runtime.teamName,
+    workerNameValue,
+    task,
+    taskId
+  );
+  await composeInitialInbox(
+    runtime.teamName,
+    workerNameValue,
+    instruction,
+    runtime.cwd
+  );
+  const envVars = getWorkerEnv(
+    runtime.teamName,
+    workerNameValue,
+    agentType
+  );
   const resolvedBinaryPath = runtime.resolvedBinaryPaths?.[agentType] ?? resolveValidatedBinaryPath(agentType);
   if (!runtime.resolvedBinaryPaths) {
     runtime.resolvedBinaryPaths = {};
@@ -4424,15 +4673,24 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
     }
     return resolveClaudeWorkerModel();
   })();
+  const workerExtraFlags = resolveWorkerLaunchExtraFlags(
+    process.env,
+    [],
+    modelForAgent
+  );
   const [launchBinary, ...launchArgs] = buildWorkerArgv(agentType, {
     teamName: runtime.teamName,
     workerName: workerNameValue,
     cwd: runtime.cwd,
     resolvedBinaryPath,
-    model: modelForAgent
+    model: modelForAgent,
+    extraFlags: workerExtraFlags
   });
   if (usePromptMode) {
-    const promptArgs = getPromptModeArgs(agentType, generateTriggerMessage(runtime.teamName, workerNameValue));
+    const promptArgs = getPromptModeArgs(
+      agentType,
+      generateTriggerMessage(runtime.teamName, workerNameValue)
+    );
     launchArgs.push(...promptArgs);
   }
   const paneConfig = {
@@ -4445,7 +4703,11 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
   };
   await spawnWorkerInPane(runtime.sessionName, paneId, paneConfig);
   runtime.workerPaneIds.push(paneId);
-  runtime.activeWorkers.set(workerNameValue, { paneId, taskId, spawnedAt: Date.now() });
+  runtime.activeWorkers.set(workerNameValue, {
+    paneId,
+    taskId,
+    spawnedAt: Date.now()
+  });
   await applyMainVerticalLayout(runtime.sessionName);
   try {
     await writePanesTrackingFileIfPresent(runtime);
@@ -4459,11 +4721,17 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
       throw new Error(`worker_pane_not_ready:${workerNameValue}`);
     }
     if (agentType === "gemini") {
-      const confirmed = await notifyPaneWithRetry(runtime.sessionName, paneId, "1");
+      const confirmed = await notifyPaneWithRetry(
+        runtime.sessionName,
+        paneId,
+        "1"
+      );
       if (!confirmed) {
         await killWorkerPane(runtime, workerNameValue, paneId);
         await resetTaskToPending(root, taskId, runtime.teamName, runtime.cwd);
-        throw new Error(`worker_notify_failed:${workerNameValue}:trust-confirm`);
+        throw new Error(
+          `worker_notify_failed:${workerNameValue}:trust-confirm`
+        );
       }
       await new Promise((r) => setTimeout(r, 800));
     }
@@ -4508,7 +4776,10 @@ async function shutdownTeam(teamName, sessionName2, cwd, timeoutMs = 3e4, worker
   if (!isCliWorkerTeam) {
     const deadline = Date.now() + timeoutMs;
     const workerCount = configData?.workerCount ?? 0;
-    const expectedAcks = Array.from({ length: workerCount }, (_, i) => `worker-${i + 1}`);
+    const expectedAcks = Array.from(
+      { length: workerCount },
+      (_, i) => `worker-${i + 1}`
+    );
     while (Date.now() < deadline && expectedAcks.length > 0) {
       for (const wName of [...expectedAcks]) {
         const ackPath = (0, import_path14.join)(root, "workers", wName, "shutdown-ack.json");
@@ -4522,8 +4793,14 @@ async function shutdownTeam(teamName, sessionName2, cwd, timeoutMs = 3e4, worker
     }
   }
   const sessionMode = ownsWindow ?? Boolean(configData?.tmuxOwnsWindow) ? sessionName2.includes(":") ? "dedicated-window" : "detached-session" : "split-pane";
-  const effectiveWorkerPaneIds = sessionMode === "split-pane" ? await resolveSplitPaneWorkerPaneIds(sessionName2, workerPaneIds, leaderPaneId) : workerPaneIds;
-  await killTeamSession(sessionName2, effectiveWorkerPaneIds, leaderPaneId, { sessionMode });
+  const effectiveWorkerPaneIds = sessionMode === "split-pane" ? await resolveSplitPaneWorkerPaneIds(
+    sessionName2,
+    workerPaneIds,
+    leaderPaneId
+  ) : workerPaneIds;
+  await killTeamSession(sessionName2, effectiveWorkerPaneIds, leaderPaneId, {
+    sessionMode
+  });
   try {
     cleanupTeamWorktrees(teamName, cwd);
   } catch {
@@ -7310,13 +7587,17 @@ function resolveLeaderBranch(cwd) {
     stdio: ["pipe", "pipe", "pipe"]
   }).trim();
   if (!out) {
-    throw new Error("auto-merge requires a non-detached leader branch (git branch --show-current returned empty)");
+    throw new Error(
+      "auto-merge requires a non-detached leader branch (git branch --show-current returned empty)"
+    );
   }
   return out;
 }
 var MONITOR_SIGNAL_STALE_MS = 3e4;
 function resolveTaskAssignment(task, resolvedRouting, roleRoutingConfig, resolvedBinaryPaths, fallbackAgent) {
-  const canonicalRoles = new Set(CANONICAL_TEAM_ROLES);
+  const canonicalRoles = new Set(
+    CANONICAL_TEAM_ROLES
+  );
   const hasExplicitRole = typeof task.role === "string" && task.role.length > 0;
   const rawRole = hasExplicitRole ? task.role : routeTaskToRole(task.subject, task.description, "executor").role;
   const normalized = normalizeDelegationRole(rawRole);
@@ -7345,7 +7626,10 @@ function resolveTaskAssignment(task, resolvedRouting, roleRoutingConfig, resolve
 }
 function sanitizeTeamName(name) {
   const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
-  if (!sanitized) throw new Error(`Invalid team name: "${name}" produces empty slug after sanitization`);
+  if (!sanitized)
+    throw new Error(
+      `Invalid team name: "${name}" produces empty slug after sanitization`
+    );
   return sanitized;
 }
 function shouldUseLaunchTimeCliResolution(reason) {
@@ -7369,7 +7653,14 @@ async function getWorkerPaneLiveness(paneId) {
 async function captureWorkerPane(paneId) {
   if (!paneId) return "";
   try {
-    const result = await tmuxExecAsync(["capture-pane", "-t", paneId, "-p", "-S", "-80"]);
+    const result = await tmuxExecAsync([
+      "capture-pane",
+      "-t",
+      paneId,
+      "-p",
+      "-S",
+      "-80"
+    ]);
     return result.stdout ?? "";
   } catch {
     return "";
@@ -7397,7 +7688,9 @@ function getTaskDependencyIds(task) {
   return task.depends_on ?? task.blocked_by ?? [];
 }
 function getMissingDependencyIds(task, taskById) {
-  return getTaskDependencyIds(task).filter((dependencyId) => !taskById.has(dependencyId));
+  return getTaskDependencyIds(task).filter(
+    (dependencyId) => !taskById.has(dependencyId)
+  );
 }
 function buildV2TaskInstruction(teamName, workerName2, task, taskId, cliOutputContract) {
   const claimTaskCommand = formatOmcCliInvocation(
@@ -7438,7 +7731,11 @@ function buildV2TaskInstruction(teamName, workerName2, task, taskId, cliOutputCo
 }
 async function notifyStartupInbox(sessionName2, paneId, message) {
   const notified = await notifyPaneWithRetry2(sessionName2, paneId, message);
-  return notified ? { ok: true, transport: "tmux_send_keys", reason: "worker_pane_notified" } : { ok: false, transport: "tmux_send_keys", reason: "worker_notify_failed" };
+  return notified ? { ok: true, transport: "tmux_send_keys", reason: "worker_pane_notified" } : {
+    ok: false,
+    transport: "tmux_send_keys",
+    reason: "worker_notify_failed"
+  };
 }
 async function notifyPaneWithRetry2(sessionName2, paneId, message, maxAttempts = 6, retryDelayMs = 350) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -7457,7 +7754,10 @@ function hasWorkerStatusProgress(status, taskId) {
 }
 async function hasWorkerTaskClaimEvidence(teamName, workerName2, cwd, taskId) {
   try {
-    const raw = await (0, import_promises10.readFile)(absPath(cwd, TeamPaths.taskFile(teamName, taskId)), "utf-8");
+    const raw = await (0, import_promises10.readFile)(
+      absPath(cwd, TeamPaths.taskFile(teamName, taskId)),
+      "utf-8"
+    );
     const task = JSON.parse(raw);
     return task.owner === workerName2 && ["in_progress", "completed", "failed"].includes(task.status);
   } catch {
@@ -7499,11 +7799,21 @@ async function spawnV2Worker(opts) {
   ]);
   const paneId = splitResult.stdout.split("\n")[0]?.trim();
   if (!paneId) {
-    return { paneId: null, startupAssigned: false, startupFailureReason: "pane_id_missing" };
+    return {
+      paneId: null,
+      startupAssigned: false,
+      startupFailureReason: "pane_id_missing"
+    };
   }
   const usePromptMode = isPromptModeAgent(opts.agentType);
-  const injectContract = shouldInjectContract(opts.role ?? null, opts.agentType);
-  const outputFile = injectContract && opts.role ? cliWorkerOutputFilePath(teamStateRoot(opts.cwd, opts.teamName), opts.workerName) : void 0;
+  const injectContract = shouldInjectContract(
+    opts.role ?? null,
+    opts.agentType
+  );
+  const outputFile = injectContract && opts.role ? cliWorkerOutputFilePath(
+    teamStateRoot(opts.cwd, opts.teamName),
+    opts.workerName
+  ) : void 0;
   const cliOutputContract = injectContract && opts.role && outputFile ? renderCliWorkerOutputContract(opts.role, outputFile) : void 0;
   const instruction = buildV2TaskInstruction(
     opts.teamName,
@@ -7513,7 +7823,11 @@ async function spawnV2Worker(opts) {
     cliOutputContract
   );
   const instructionStateRoot = opts.worktreePath ? "$OMC_TEAM_STATE_ROOT" : void 0;
-  const inboxTriggerMessage = generateTriggerMessage(opts.teamName, opts.workerName, instructionStateRoot);
+  const inboxTriggerMessage = generateTriggerMessage(
+    opts.teamName,
+    opts.workerName,
+    instructionStateRoot
+  );
   const promptModeStartupPrompt = generatePromptModeStartupPrompt(
     opts.teamName,
     opts.workerName,
@@ -7546,15 +7860,24 @@ async function spawnV2Worker(opts) {
     }
     return resolveClaudeWorkerModel();
   })();
+  const workerExtraFlags = resolveWorkerLaunchExtraFlags(
+    process.env,
+    [],
+    modelForAgent,
+    opts.agentType === "codex" ? resolveAgentReasoningEffort(opts.role ?? void 0) : void 0
+  );
   const [launchBinary, ...launchArgs] = buildWorkerArgv(opts.agentType, {
     teamName: opts.teamName,
     workerName: opts.workerName,
     cwd: opts.workerCwd ?? opts.cwd,
     resolvedBinaryPath,
-    model: modelForAgent
+    model: modelForAgent,
+    extraFlags: workerExtraFlags
   });
   if (usePromptMode) {
-    launchArgs.push(...getPromptModeArgs(opts.agentType, promptModeStartupPrompt));
+    launchArgs.push(
+      ...getPromptModeArgs(opts.agentType, promptModeStartupPrompt)
+    );
   }
   if (opts.autoMerge && opts.worktreePath) {
     const cadenceContext = {
@@ -7601,12 +7924,24 @@ async function spawnV2Worker(opts) {
     inboxCorrelationKey: `startup:${opts.workerName}:${opts.taskId}`,
     notify: async (_target, triggerMessage) => {
       if (usePromptMode) {
-        return { ok: true, transport: "prompt_stdin", reason: "prompt_mode_launch_args" };
+        return {
+          ok: true,
+          transport: "prompt_stdin",
+          reason: "prompt_mode_launch_args"
+        };
       }
       if (opts.agentType === "gemini") {
-        const confirmed = await notifyPaneWithRetry2(opts.sessionName, paneId, "1");
+        const confirmed = await notifyPaneWithRetry2(
+          opts.sessionName,
+          paneId,
+          "1"
+        );
         if (!confirmed) {
-          return { ok: false, transport: "tmux_send_keys", reason: "worker_notify_failed:trust-confirm" };
+          return {
+            ok: false,
+            transport: "tmux_send_keys",
+            reason: "worker_notify_failed:trust-confirm"
+          };
         }
         await new Promise((r) => setTimeout(r, 800));
       }
@@ -7672,20 +8007,36 @@ async function rollbackUnpersistedNativeWorktreeStartup(teamName, cwd, cause) {
       return;
     }
     await (0, import_promises10.mkdir)(teamRoot, { recursive: true });
-    await (0, import_promises10.writeFile)((0, import_path21.join)(teamRoot, "startup-failure.json"), JSON.stringify({
-      reason: "startup_failed_before_config_persisted",
-      error: errorMessage,
-      preserved: cleanup.preserved,
-      recorded_at: (/* @__PURE__ */ new Date()).toISOString()
-    }, null, 2), "utf-8");
+    await (0, import_promises10.writeFile)(
+      (0, import_path21.join)(teamRoot, "startup-failure.json"),
+      JSON.stringify(
+        {
+          reason: "startup_failed_before_config_persisted",
+          error: errorMessage,
+          preserved: cleanup.preserved,
+          recorded_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
   } catch (rollbackError) {
     await (0, import_promises10.mkdir)(teamRoot, { recursive: true });
-    await (0, import_promises10.writeFile)((0, import_path21.join)(teamRoot, "startup-failure.json"), JSON.stringify({
-      reason: "startup_failed_before_config_persisted",
-      error: errorMessage,
-      rollback_error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-      recorded_at: (/* @__PURE__ */ new Date()).toISOString()
-    }, null, 2), "utf-8");
+    await (0, import_promises10.writeFile)(
+      (0, import_path21.join)(teamRoot, "startup-failure.json"),
+      JSON.stringify(
+        {
+          reason: "startup_failed_before_config_persisted",
+          error: errorMessage,
+          rollback_error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          recorded_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
   }
 }
 async function rollbackStartedNativeWorktreeStartup(args) {
@@ -7702,7 +8053,11 @@ async function rollbackStartedNativeWorktreeStartup(args) {
 `
     );
   }
-  await rollbackUnpersistedNativeWorktreeStartup(args.teamName, args.cwd, args.cause);
+  await rollbackUnpersistedNativeWorktreeStartup(
+    args.teamName,
+    args.cwd,
+    args.cause
+  );
 }
 async function startTeamV2(config) {
   const sanitized = sanitizeTeamName(config.teamName);
@@ -7716,12 +8071,16 @@ async function startTeamV2(config) {
   let autoMergeLeaderBranch;
   if (config.autoMerge) {
     if (!isRuntimeV2Enabled()) {
-      throw new Error("auto-merge requires OMC_RUNTIME_V2=1 (this feature is v2-only).");
+      throw new Error(
+        "auto-merge requires OMC_RUNTIME_V2=1 (this feature is v2-only)."
+      );
     }
     autoMergeLeaderBranch = resolveLeaderBranch(leaderCwd);
     const stripped = autoMergeLeaderBranch.replace(/^refs\/heads\//i, "").toLowerCase();
     if (stripped === "main" || stripped === "master") {
-      throw new Error("auto-merge refuses main/master leader branch \u2014 use a feature branch");
+      throw new Error(
+        "auto-merge refuses main/master leader branch \u2014 use a feature branch"
+      );
     }
     if (worktreeMode !== "named") {
       worktreeMode = "named";
@@ -7756,9 +8115,15 @@ async function startTeamV2(config) {
     } catch {
     }
   }
-  await (0, import_promises10.mkdir)(absPath(leaderCwd, TeamPaths.tasks(sanitized)), { recursive: true });
-  await (0, import_promises10.mkdir)(absPath(leaderCwd, TeamPaths.workers(sanitized)), { recursive: true });
-  await (0, import_promises10.mkdir)((0, import_path21.join)(leaderCwd, ".omc", "state", "team", sanitized, "mailbox"), { recursive: true });
+  await (0, import_promises10.mkdir)(absPath(leaderCwd, TeamPaths.tasks(sanitized)), {
+    recursive: true
+  });
+  await (0, import_promises10.mkdir)(absPath(leaderCwd, TeamPaths.workers(sanitized)), {
+    recursive: true
+  });
+  await (0, import_promises10.mkdir)((0, import_path21.join)(leaderCwd, ".omc", "state", "team", sanitized, "mailbox"), {
+    recursive: true
+  });
   const missingBinaryLogFailure = createSwallowedErrorLogger(
     "team.runtime-v2.startTeamV2 cli_binary_missing event failed"
   );
@@ -7767,36 +8132,59 @@ async function startTeamV2(config) {
       `[team/runtime-v2] cli_binary_missing:${agentType}: ${reason} \u2014 falling back to claude snapshot (AC-8)
 `
     );
-    await appendTeamEvent(sanitized, {
-      type: "team_leader_nudge",
-      worker: "leader-fixed",
-      reason: `cli_binary_missing:${agentType}:${reason}`
-    }, leaderCwd).catch(missingBinaryLogFailure);
+    await appendTeamEvent(
+      sanitized,
+      {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `cli_binary_missing:${agentType}:${reason}`
+      },
+      leaderCwd
+    ).catch(missingBinaryLogFailure);
   }
   for (let i = 0; i < config.tasks.length; i++) {
     const taskId = String(i + 1);
-    const taskFilePath = absPath(leaderCwd, TeamPaths.taskFile(sanitized, taskId));
+    const taskFilePath = absPath(
+      leaderCwd,
+      TeamPaths.taskFile(sanitized, taskId)
+    );
     await (0, import_promises10.mkdir)((0, import_path21.join)(taskFilePath, ".."), { recursive: true });
-    await (0, import_promises10.writeFile)(taskFilePath, JSON.stringify({
-      id: taskId,
-      subject: config.tasks[i].subject,
-      description: config.tasks[i].description,
-      status: "pending",
-      owner: null,
-      result: null,
-      ...config.tasks[i].delegation ? { delegation: config.tasks[i].delegation } : {},
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }, null, 2), "utf-8");
+    await (0, import_promises10.writeFile)(
+      taskFilePath,
+      JSON.stringify(
+        {
+          id: taskId,
+          subject: config.tasks[i].subject,
+          description: config.tasks[i].description,
+          status: "pending",
+          owner: null,
+          result: null,
+          ...config.tasks[i].delegation ? { delegation: config.tasks[i].delegation } : {},
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
   }
-  const workerNames = Array.from({ length: config.workerCount }, (_, index) => `worker-${index + 1}`);
+  const workerNames = Array.from(
+    { length: config.workerCount },
+    (_, index) => `worker-${index + 1}`
+  );
   const workerWorktrees = /* @__PURE__ */ new Map();
   try {
     if (worktreeMode !== "disabled") {
       for (const workerName2 of workerNames) {
-        const worktree = ensureWorkerWorktree(sanitized, workerName2, leaderCwd, {
-          mode: worktreeMode,
-          requireCleanLeader: true
-        });
+        const worktree = ensureWorkerWorktree(
+          sanitized,
+          workerName2,
+          leaderCwd,
+          {
+            mode: worktreeMode,
+            requireCleanLeader: true
+          }
+        );
         if (worktree) workerWorktrees.set(workerName2, worktree);
       }
     }
@@ -7816,18 +8204,28 @@ async function startTeamV2(config) {
     }
   }
   if (unownedTaskIndices.length > 0) {
-    const allocationTasks = unownedTaskIndices.map((idx) => ({
-      id: String(idx),
-      subject: config.tasks[idx].subject,
-      description: config.tasks[idx].description
-    }));
-    const allocationWorkers = workerNames.map((name, i) => ({
-      name,
-      role: config.workerRoles?.[i] ?? (agentTypes[i % agentTypes.length] ?? agentTypes[0] ?? "claude"),
-      currentLoad: 0
-    }));
-    for (const r of allocateTasksToWorkers(allocationTasks, allocationWorkers)) {
-      startupAllocations.push({ workerName: r.workerName, taskIndex: Number(r.taskId) });
+    const allocationTasks = unownedTaskIndices.map(
+      (idx) => ({
+        id: String(idx),
+        subject: config.tasks[idx].subject,
+        description: config.tasks[idx].description
+      })
+    );
+    const allocationWorkers = workerNames.map(
+      (name, i) => ({
+        name,
+        role: config.workerRoles?.[i] ?? (agentTypes[i % agentTypes.length] ?? agentTypes[0] ?? "claude"),
+        currentLoad: 0
+      })
+    );
+    for (const r of allocateTasksToWorkers(
+      allocationTasks,
+      allocationWorkers
+    )) {
+      startupAllocations.push({
+        workerName: r.workerName,
+        taskIndex: Number(r.taskId)
+      });
     }
   }
   try {
@@ -7851,7 +8249,13 @@ async function startTeamV2(config) {
       const worktree = workerWorktrees.get(wName);
       if (worktree) {
         const overlayContent = await (0, import_promises10.readFile)(overlayPath, "utf-8");
-        installWorktreeRootAgents(sanitized, wName, leaderCwd, worktree.path, overlayContent);
+        installWorktreeRootAgents(
+          sanitized,
+          wName,
+          leaderCwd,
+          worktree.path,
+          overlayContent
+        );
       }
     }
   } catch (error) {
@@ -7960,7 +8364,11 @@ async function startTeamV2(config) {
     next_worker_index: teamConfig.next_worker_index
   };
   try {
-    await (0, import_promises10.writeFile)(absPath(leaderCwd, TeamPaths.manifest(sanitized)), JSON.stringify(teamManifest, null, 2), "utf-8");
+    await (0, import_promises10.writeFile)(
+      absPath(leaderCwd, TeamPaths.manifest(sanitized)),
+      JSON.stringify(teamManifest, null, 2),
+      "utf-8"
+    );
   } catch (error) {
     await rollbackStartedNativeWorktreeStartup({
       teamName: sanitized,
@@ -8030,11 +8438,15 @@ async function startTeamV2(config) {
         const logEventFailure2 = createSwallowedErrorLogger(
           "team.runtime-v2.startTeamV2 appendTeamEvent failed"
         );
-        appendTeamEvent(sanitized, {
-          type: "team_leader_nudge",
-          worker: "leader-fixed",
-          reason: `startup_manual_intervention_required:${wName}:${workerLaunch.startupFailureReason}`
-        }, leaderCwd).catch(logEventFailure2);
+        appendTeamEvent(
+          sanitized,
+          {
+            type: "team_leader_nudge",
+            worker: "leader-fixed",
+            reason: `startup_manual_intervention_required:${wName}:${workerLaunch.startupFailureReason}`
+          },
+          leaderCwd
+        ).catch(logEventFailure2);
       }
     }
   } catch (error) {
@@ -8067,11 +8479,15 @@ async function startTeamV2(config) {
   const logEventFailure = createSwallowedErrorLogger(
     "team.runtime-v2.startTeamV2 appendTeamEvent failed"
   );
-  appendTeamEvent(sanitized, {
-    type: "team_leader_nudge",
-    worker: "leader-fixed",
-    reason: `start_team_v2: workers=${config.workerCount} tasks=${config.tasks.length} panes=${workerPaneIds.length}`
-  }, leaderCwd).catch(logEventFailure);
+  appendTeamEvent(
+    sanitized,
+    {
+      type: "team_leader_nudge",
+      worker: "leader-fixed",
+      reason: `start_team_v2: workers=${config.workerCount} tasks=${config.tasks.length} panes=${workerPaneIds.length}`
+    },
+    leaderCwd
+  ).catch(logEventFailure);
   if (config.autoMerge && autoMergeLeaderBranch) {
     try {
       await ensureLeaderInbox(sanitized, leaderCwd);
@@ -8088,8 +8504,10 @@ async function startTeamV2(config) {
           cwd: leaderCwd
         });
       } catch (recErr) {
-        process.stderr.write(`[team/runtime-v2] auto-merge recover-from-restart failed: ${recErr}
-`);
+        process.stderr.write(
+          `[team/runtime-v2] auto-merge recover-from-restart failed: ${recErr}
+`
+        );
       }
       const orchestrator = await startMergeOrchestrator({
         teamName: sanitized,
@@ -8135,7 +8553,11 @@ async function processCliWorkerVerdicts(teamName, cwd) {
     "team.runtime-v2.processCliWorkerVerdicts appendTeamEvent failed"
   );
   const { rename: rename4 } = await import("fs/promises");
-  const { readFileSync: readFileSync11, writeFileSync: writeFileSync3, existsSync: fsExistsSync } = await import("fs");
+  const {
+    readFileSync: readFileSync11,
+    writeFileSync: writeFileSync3,
+    existsSync: fsExistsSync
+  } = await import("fs");
   const { withFileLockSync: withFileLockSync2 } = await Promise.resolve().then(() => (init_file_lock(), file_lock_exports));
   for (const worker of config.workers) {
     const outputFile = worker.output_file;
@@ -8143,7 +8565,11 @@ async function processCliWorkerVerdicts(teamName, cwd) {
     const liveness = await getWorkerPaneLiveness(worker.pane_id);
     if (liveness !== "dead") continue;
     if (!fsExistsSync(outputFile)) {
-      results.push({ workerName: worker.name, taskId: null, status: "file_missing" });
+      results.push({
+        workerName: worker.name,
+        taskId: null,
+        status: "file_missing"
+      });
       continue;
     }
     let payload;
@@ -8152,12 +8578,21 @@ async function processCliWorkerVerdicts(teamName, cwd) {
       payload = parseCliWorkerVerdict(raw);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await appendTeamEvent(sanitized, {
-        type: "team_leader_nudge",
-        worker: "leader-fixed",
-        reason: `cli_worker_verdict_parse_failed:${worker.name}:${reason}`
-      }, cwd).catch(logEventFailure);
-      results.push({ workerName: worker.name, taskId: null, status: "parse_failed", reason });
+      await appendTeamEvent(
+        sanitized,
+        {
+          type: "team_leader_nudge",
+          worker: "leader-fixed",
+          reason: `cli_worker_verdict_parse_failed:${worker.name}:${reason}`
+        },
+        cwd
+      ).catch(logEventFailure);
+      results.push({
+        workerName: worker.name,
+        taskId: null,
+        status: "parse_failed",
+        reason
+      });
       continue;
     }
     const candidateTaskIds = /* @__PURE__ */ new Set();
@@ -8180,11 +8615,15 @@ async function processCliWorkerVerdicts(teamName, cwd) {
       }
     }
     if (!targetTaskId || !targetTaskPath) {
-      await appendTeamEvent(sanitized, {
-        type: "team_leader_nudge",
-        worker: "leader-fixed",
-        reason: `cli_worker_verdict_no_in_progress_task:${worker.name}:verdict=${payload.verdict}`
-      }, cwd).catch(logEventFailure);
+      await appendTeamEvent(
+        sanitized,
+        {
+          type: "team_leader_nudge",
+          worker: "leader-fixed",
+          reason: `cli_worker_verdict_no_in_progress_task:${worker.name}:verdict=${payload.verdict}`
+        },
+        cwd
+      ).catch(logEventFailure);
       results.push({
         workerName: worker.name,
         taskId: payload.task_id,
@@ -8217,7 +8656,11 @@ async function processCliWorkerVerdicts(teamName, cwd) {
         if (terminalStatus === "failed") {
           taskData.error = `cli_worker_verdict:${payload.verdict}:${payload.summary}`;
         }
-        writeFileSync3(targetTaskPath, JSON.stringify(taskData, null, 2), "utf-8");
+        writeFileSync3(
+          targetTaskPath,
+          JSON.stringify(taskData, null, 2),
+          "utf-8"
+        );
         transitionOk = true;
       });
     } catch {
@@ -8231,12 +8674,16 @@ async function processCliWorkerVerdicts(teamName, cwd) {
       });
       continue;
     }
-    await appendTeamEvent(sanitized, {
-      type: terminalStatus === "completed" ? "task_completed" : "task_failed",
-      worker: worker.name,
-      task_id: targetTaskId,
-      reason: `cli_worker_verdict:${payload.verdict}`
-    }, cwd).catch(logEventFailure);
+    await appendTeamEvent(
+      sanitized,
+      {
+        type: terminalStatus === "completed" ? "task_completed" : "task_failed",
+        worker: worker.name,
+        task_id: targetTaskId,
+        reason: `cli_worker_verdict:${payload.verdict}`
+      },
+      cwd
+    ).catch(logEventFailure);
     try {
       await rename4(outputFile, outputFile + ".processed");
     } catch {
@@ -8293,7 +8740,14 @@ async function monitorTeamV2(teamName, cwd) {
     })
   );
   const workerScanMs = import_perf_hooks.performance.now() - workerScanStartMs;
-  for (const { worker: w, alive, liveness, status, heartbeat, paneCapture } of workerSignals) {
+  for (const {
+    worker: w,
+    alive,
+    liveness,
+    status,
+    heartbeat,
+    paneCapture
+  } of workerSignals) {
     const currentTask = status.current_task_id ? taskById.get(status.current_task_id) ?? null : null;
     const outstandingTask = currentTask ?? findOutstandingWorkerTask(w, taskById, inProgressByOwner);
     const expectedTaskId = status.current_task_id ?? outstandingTask?.id ?? w.assigned_tasks[0] ?? "";
@@ -8346,11 +8800,17 @@ async function monitorTeamV2(teamName, cwd) {
           `Investigate ${w.name}: task-${outstandingTask?.id ?? expectedTaskId} is blocked by missing task ids [${missingDependencyIds.join(", ")}]; pane is idle at prompt`
         );
       } else if (stallReason === "no_work_start_evidence") {
-        recommendations.push(`Investigate ${w.name}: assigned work but no work-start evidence; pane is idle at prompt`);
+        recommendations.push(
+          `Investigate ${w.name}: assigned work but no work-start evidence; pane is idle at prompt`
+        );
       } else if (stallReason === "stale_or_missing_worker_reports") {
-        recommendations.push(`Investigate ${w.name}: pane is idle while status/heartbeat are stale or missing`);
+        recommendations.push(
+          `Investigate ${w.name}: pane is idle while status/heartbeat are stale or missing`
+        );
       } else {
-        recommendations.push(`Investigate ${w.name}: no meaningful turn progress and pane is idle at prompt`);
+        recommendations.push(
+          `Investigate ${w.name}: no meaningful turn progress and pane is idle at prompt`
+        );
       }
     }
   }
@@ -8372,36 +8832,57 @@ async function monitorTeamV2(teamName, cwd) {
       `Investigate task-${task.id}: depends on missing task ids [${missingDependencyIds.join(", ")}]`
     );
   }
-  const phase = inferPhase(allTasks.map((t) => ({
-    status: t.status,
-    metadata: void 0
-  })));
+  const phase = inferPhase(
+    allTasks.map((t) => ({
+      status: t.status,
+      metadata: void 0
+    }))
+  );
   await emitMonitorDerivedEvents(
     sanitized,
     allTasks,
-    workers.map((w) => ({ name: w.name, alive: w.alive, liveness: w.liveness, status: w.status })),
+    workers.map((w) => ({
+      name: w.name,
+      alive: w.alive,
+      liveness: w.liveness,
+      status: w.status
+    })),
     previousSnapshot,
     cwd
   );
   const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   const totalMs = import_perf_hooks.performance.now() - monitorStartMs;
-  await writeMonitorSnapshot(sanitized, {
-    taskStatusById: Object.fromEntries(allTasks.map((t) => [t.id, t.status])),
-    workerAliveByName: Object.fromEntries(workers.map((w) => [w.name, w.alive])),
-    workerLivenessByName: Object.fromEntries(workers.map((w) => [w.name, w.liveness])),
-    workerStateByName: Object.fromEntries(workers.map((w) => [w.name, w.status.state])),
-    workerTurnCountByName: Object.fromEntries(workers.map((w) => [w.name, w.heartbeat?.turn_count ?? 0])),
-    workerTaskIdByName: Object.fromEntries(workers.map((w) => [w.name, w.status.current_task_id ?? ""])),
-    mailboxNotifiedByMessageId: previousSnapshot?.mailboxNotifiedByMessageId ?? {},
-    completedEventTaskIds: previousSnapshot?.completedEventTaskIds ?? {},
-    monitorTimings: {
-      list_tasks_ms: Number(listTasksMs.toFixed(2)),
-      worker_scan_ms: Number(workerScanMs.toFixed(2)),
-      mailbox_delivery_ms: 0,
-      total_ms: Number(totalMs.toFixed(2)),
-      updated_at: updatedAt
-    }
-  }, cwd);
+  await writeMonitorSnapshot(
+    sanitized,
+    {
+      taskStatusById: Object.fromEntries(allTasks.map((t) => [t.id, t.status])),
+      workerAliveByName: Object.fromEntries(
+        workers.map((w) => [w.name, w.alive])
+      ),
+      workerLivenessByName: Object.fromEntries(
+        workers.map((w) => [w.name, w.liveness])
+      ),
+      workerStateByName: Object.fromEntries(
+        workers.map((w) => [w.name, w.status.state])
+      ),
+      workerTurnCountByName: Object.fromEntries(
+        workers.map((w) => [w.name, w.heartbeat?.turn_count ?? 0])
+      ),
+      workerTaskIdByName: Object.fromEntries(
+        workers.map((w) => [w.name, w.status.current_task_id ?? ""])
+      ),
+      mailboxNotifiedByMessageId: previousSnapshot?.mailboxNotifiedByMessageId ?? {},
+      completedEventTaskIds: previousSnapshot?.completedEventTaskIds ?? {},
+      monitorTimings: {
+        list_tasks_ms: Number(listTasksMs.toFixed(2)),
+        worker_scan_ms: Number(workerScanMs.toFixed(2)),
+        mailbox_delivery_ms: 0,
+        total_ms: Number(totalMs.toFixed(2)),
+        updated_at: updatedAt
+      }
+    },
+    cwd
+  );
   return {
     teamName: sanitized,
     phase,
@@ -8437,11 +8918,15 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
       try {
         const drainResult = await orchestrator.drainAndStop();
         if (drainResult.unmerged.length > 0) {
-          await appendTeamEvent(sanitized, {
-            type: "team_leader_nudge",
-            worker: "leader-fixed",
-            reason: `auto_merge_drain_unmerged:${drainResult.unmerged.map((u) => `${u.workerName}:${u.reason}`).join(",")}`
-          }, cwd).catch(logEventFailure);
+          await appendTeamEvent(
+            sanitized,
+            {
+              type: "team_leader_nudge",
+              worker: "leader-fixed",
+              reason: `auto_merge_drain_unmerged:${drainResult.unmerged.map((u) => `${u.workerName}:${u.reason}`).join(",")}`
+            },
+            cwd
+          ).catch(logEventFailure);
         }
         for (const w of config?.workers ?? []) {
           try {
@@ -8454,8 +8939,10 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
           }
         }
       } catch (err) {
-        process.stderr.write(`[team/runtime-v2] orchestrator drainAndStop: ${err}
-`);
+        process.stderr.write(
+          `[team/runtime-v2] orchestrator drainAndStop: ${err}
+`
+        );
       } finally {
         await stopTeamCadence(sanitized);
         unregisterTeamOrchestrator(sanitized);
@@ -8467,7 +8954,9 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
   if (!config) {
     const cleanupSafety = inspectTeamWorktreeCleanupSafety(sanitized, cwd);
     if (cleanupSafety.hasEvidence) {
-      process.stderr.write("[team/runtime-v2] preserving team state because config is missing and worktree cleanup evidence remains\n");
+      process.stderr.write(
+        "[team/runtime-v2] preserving team state because config is missing and worktree cleanup evidence remains\n"
+      );
       return;
     }
     await cleanupTeamState(sanitized, cwd);
@@ -8486,25 +8975,37 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
       allowed: false
     };
     gate.allowed = gate.pending === 0 && gate.blocked === 0 && gate.in_progress === 0 && gate.failed === 0;
-    await appendTeamEvent(sanitized, {
-      type: "shutdown_gate",
-      worker: "leader-fixed",
-      reason: `allowed=${gate.allowed} total=${gate.total} pending=${gate.pending} blocked=${gate.blocked} in_progress=${gate.in_progress} completed=${gate.completed} failed=${gate.failed}${ralph ? " policy=ralph" : ""}`
-    }, cwd).catch(logEventFailure);
+    await appendTeamEvent(
+      sanitized,
+      {
+        type: "shutdown_gate",
+        worker: "leader-fixed",
+        reason: `allowed=${gate.allowed} total=${gate.total} pending=${gate.pending} blocked=${gate.blocked} in_progress=${gate.in_progress} completed=${gate.completed} failed=${gate.failed}${ralph ? " policy=ralph" : ""}`
+      },
+      cwd
+    ).catch(logEventFailure);
     if (!gate.allowed) {
       const hasActiveWork = gate.pending > 0 || gate.blocked > 0 || gate.in_progress > 0;
       if (!governance.cleanup_requires_all_workers_inactive) {
-        await appendTeamEvent(sanitized, {
-          type: "team_leader_nudge",
-          worker: "leader-fixed",
-          reason: `cleanup_override_bypassed:pending=${gate.pending},blocked=${gate.blocked},in_progress=${gate.in_progress},failed=${gate.failed}`
-        }, cwd).catch(logEventFailure);
+        await appendTeamEvent(
+          sanitized,
+          {
+            type: "team_leader_nudge",
+            worker: "leader-fixed",
+            reason: `cleanup_override_bypassed:pending=${gate.pending},blocked=${gate.blocked},in_progress=${gate.in_progress},failed=${gate.failed}`
+          },
+          cwd
+        ).catch(logEventFailure);
       } else if (ralph && !hasActiveWork) {
-        await appendTeamEvent(sanitized, {
-          type: "team_leader_nudge",
-          worker: "leader-fixed",
-          reason: `gate_bypassed:pending=${gate.pending},blocked=${gate.blocked},in_progress=${gate.in_progress},failed=${gate.failed}`
-        }, cwd).catch(logEventFailure);
+        await appendTeamEvent(
+          sanitized,
+          {
+            type: "team_leader_nudge",
+            worker: "leader-fixed",
+            reason: `gate_bypassed:pending=${gate.pending},blocked=${gate.blocked},in_progress=${gate.in_progress},failed=${gate.failed}`
+          },
+          cwd
+        ).catch(logEventFailure);
       } else {
         throw new Error(
           `shutdown_gate_blocked:pending=${gate.pending},blocked=${gate.blocked},in_progress=${gate.in_progress},failed=${gate.failed}`
@@ -8513,11 +9014,15 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
     }
   }
   if (force) {
-    await appendTeamEvent(sanitized, {
-      type: "shutdown_gate_forced",
-      worker: "leader-fixed",
-      reason: "force_bypass"
-    }, cwd).catch(logEventFailure);
+    await appendTeamEvent(
+      sanitized,
+      {
+        type: "shutdown_gate_forced",
+        worker: "leader-fixed",
+        reason: "force_bypass"
+      },
+      cwd
+    ).catch(logEventFailure);
   }
   const shutdownRequestTimes = /* @__PURE__ */ new Map();
   for (const w of config.workers) {
@@ -8537,8 +9042,10 @@ Then exit your session.
 `;
       await writeWorkerInbox(sanitized, w.name, shutdownInbox, cwd);
     } catch (err) {
-      process.stderr.write(`[team/runtime-v2] shutdown request failed for ${w.name}: ${err}
-`);
+      process.stderr.write(
+        `[team/runtime-v2] shutdown request failed for ${w.name}: ${err}
+`
+      );
     }
   }
   const deadline = Date.now() + timeoutMs;
@@ -8547,14 +9054,23 @@ Then exit your session.
   while (Date.now() < deadline) {
     for (const w of config.workers) {
       if (ackedWorkers.has(w.name)) continue;
-      const ack = await readShutdownAck(sanitized, w.name, cwd, shutdownRequestTimes.get(w.name));
+      const ack = await readShutdownAck(
+        sanitized,
+        w.name,
+        cwd,
+        shutdownRequestTimes.get(w.name)
+      );
       if (ack) {
         ackedWorkers.add(w.name);
-        await appendTeamEvent(sanitized, {
-          type: "shutdown_ack",
-          worker: w.name,
-          reason: ack.status === "reject" ? `reject:${ack.reason || "no_reason"}` : "accept"
-        }, cwd).catch(logEventFailure);
+        await appendTeamEvent(
+          sanitized,
+          {
+            type: "shutdown_ack",
+            worker: w.name,
+            reason: ack.status === "reject" ? `reject:${ack.reason || "no_reason"}` : "accept"
+          },
+          cwd
+        ).catch(logEventFailure);
         if (ack.status === "reject") {
           rejected.push({ worker: w.name, reason: ack.reason || "no_reason" });
         }
@@ -8570,7 +9086,12 @@ Then exit your session.
   }
   const recordedWorkerPaneIds = config.workers.map((w) => w.pane_id).filter((p) => typeof p === "string" && p.trim().length > 0);
   try {
-    const { killWorkerPanes: killWorkerPanes2, killTeamSession: killTeamSession2, resolveSplitPaneWorkerPaneIds: resolveSplitPaneWorkerPaneIds2, getWorkerLiveness: getWorkerLiveness2 } = await Promise.resolve().then(() => (init_tmux_session(), tmux_session_exports));
+    const {
+      killWorkerPanes: killWorkerPanes2,
+      killTeamSession: killTeamSession2,
+      resolveSplitPaneWorkerPaneIds: resolveSplitPaneWorkerPaneIds2,
+      getWorkerLiveness: getWorkerLiveness2
+    } = await Promise.resolve().then(() => (init_tmux_session(), tmux_session_exports));
     const ownsWindow = config.tmux_window_owned === true;
     const workerPaneIds = ownsWindow ? recordedWorkerPaneIds : await resolveSplitPaneWorkerPaneIds2(
       config.tmux_session,
@@ -8592,8 +9113,16 @@ Then exit your session.
         { sessionMode }
       );
     }
-    const paneById = new Map(config.workers.filter((w) => typeof w.pane_id === "string" && w.pane_id.trim().length > 0).map((w) => [w.pane_id, w.name]));
-    const liveness = await Promise.all(workerPaneIds.map(async (paneId) => [paneId, await getWorkerLiveness2(paneId)]));
+    const paneById = new Map(
+      config.workers.filter(
+        (w) => typeof w.pane_id === "string" && w.pane_id.trim().length > 0
+      ).map((w) => [w.pane_id, w.name])
+    );
+    const liveness = await Promise.all(
+      workerPaneIds.map(
+        async (paneId) => [paneId, await getWorkerLiveness2(paneId)]
+      )
+    );
     const aliveWorkers = liveness.filter(([, state]) => state === "alive").map(([paneId]) => paneById.get(paneId) ?? paneId);
     if (aliveWorkers.length > 0) {
       process.stderr.write(`[team/runtime-v2] preserving worktrees/state because worker pane(s) are still alive: ${aliveWorkers.join(", ")}
@@ -8612,21 +9141,29 @@ Then exit your session.
     process.stderr.write(`[team/runtime-v2] tmux cleanup: ${err}
 `);
     if (recordedWorkerPaneIds.length > 0) {
-      process.stderr.write("[team/runtime-v2] preserving worktrees/state because tmux cleanup did not prove worker panes exited\n");
+      process.stderr.write(
+        "[team/runtime-v2] preserving worktrees/state because tmux cleanup did not prove worker panes exited\n"
+      );
       await finalizeAutoMerge();
       return;
     }
   }
   if (ralph) {
-    const finalTasks = await listTasksFromFiles(sanitized, cwd).catch(() => []);
+    const finalTasks = await listTasksFromFiles(sanitized, cwd).catch(
+      () => []
+    );
     const completed = finalTasks.filter((t) => t.status === "completed").length;
     const failed = finalTasks.filter((t) => t.status === "failed").length;
     const pending = finalTasks.filter((t) => t.status === "pending").length;
-    await appendTeamEvent(sanitized, {
-      type: "team_leader_nudge",
-      worker: "leader-fixed",
-      reason: `ralph_cleanup_summary: total=${finalTasks.length} completed=${completed} failed=${failed} pending=${pending} force=${force}`
-    }, cwd).catch(logEventFailure);
+    await appendTeamEvent(
+      sanitized,
+      {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `ralph_cleanup_summary: total=${finalTasks.length} completed=${completed} failed=${failed} pending=${pending} force=${force}`
+      },
+      cwd
+    ).catch(logEventFailure);
   }
   await finalizeAutoMerge();
   let preservedWorktrees = 0;
@@ -8641,8 +9178,10 @@ Then exit your session.
   if (preservedWorktrees === 0) {
     await cleanupTeamState(sanitized, cwd);
   } else {
-    process.stderr.write(`[team/runtime-v2] preserved ${preservedWorktrees} worktree(s); keeping team state for follow-up cleanup
-`);
+    process.stderr.write(
+      `[team/runtime-v2] preserved ${preservedWorktrees} worktree(s); keeping team state for follow-up cleanup
+`
+    );
   }
 }
 

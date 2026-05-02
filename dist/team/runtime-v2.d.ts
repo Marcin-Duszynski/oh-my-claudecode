@@ -15,12 +15,12 @@
  * Architecture mirrors runtime.ts: startTeam, monitorTeam, shutdownTeam,
  * assignTask, resumeTeam as discrete operations driven by the caller.
  */
-import type { TeamConfig, TeamTask, TeamTaskDelegationPlan, WorkerStatus, WorkerHeartbeat } from './types.js';
-import type { TeamPhase } from './phase-controller.js';
-import { type WorkerPaneLiveness } from './tmux-session.js';
-import type { PluginConfig } from '../shared/types.js';
-import { type CliWorkerOutputPayload } from './cli-worker-contract.js';
-export { isRuntimeV2Enabled } from './runtime-flags.js';
+import type { TeamConfig, TeamTask, TeamTaskDelegationPlan, WorkerStatus, WorkerHeartbeat } from "./types.js";
+import type { TeamPhase } from "./phase-controller.js";
+import { type WorkerPaneLiveness } from "./tmux-session.js";
+import type { PluginConfig } from "../shared/types.js";
+import { type CliWorkerOutputPayload } from "./cli-worker-contract.js";
+export { isRuntimeV2Enabled } from "./runtime-flags.js";
 export interface TeamRuntimeV2 {
     teamName: string;
     sanitizedName: string;
@@ -136,12 +136,12 @@ export declare class CircuitBreakerV2 {
  * task status back to pending so they can be claimed by other workers.
  */
 export declare function requeueDeadWorkerTasks(teamName: string, deadWorkerNames: string[], cwd: string): Promise<string[]>;
-export type CliWorkerVerdictStatus = 'completed' | 'failed' | 'file_missing' | 'parse_failed' | 'no_in_progress_task' | 'already_terminal' | 'skipped';
+export type CliWorkerVerdictStatus = "completed" | "failed" | "file_missing" | "parse_failed" | "no_in_progress_task" | "already_terminal" | "skipped";
 export interface CliWorkerVerdictResult {
     workerName: string;
     taskId: string | null;
     status: CliWorkerVerdictStatus;
-    verdict?: CliWorkerOutputPayload['verdict'];
+    verdict?: CliWorkerOutputPayload["verdict"];
     reason?: string;
 }
 /**
