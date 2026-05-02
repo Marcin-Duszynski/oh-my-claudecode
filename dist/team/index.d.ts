@@ -62,6 +62,7 @@ export { assertCleanLeaderWorkspaceForWorkerWorktrees, ensureWorktree, isGitRepo
 export type { EnsureWorktreeOptions, EnsureWorktreeResult, ParsedWorktreeMode, PlannedWorktreeTarget, RollbackWorktreeOptions, WorktreeMode, WorktreePlanInput, } from './worktree.js';
 export { canResumeTeamState, createTeamState, getPhaseAgents, getPhaseInstructions, isTerminalPhase as isTerminalTeamOrchestratorPhase, isValidTransition, transitionPhase as transitionTeamOrchestratorPhase, } from './orchestrator.js';
 export type { TeamPhase as TeamPipelinePhase, TeamState as TeamOrchestratorState, TerminalPhase as TeamTerminalPhase } from './orchestrator.js';
+export { readTeamPaneStatus } from './pane-status.js';
 export { checkSentinelReadiness, waitForSentinelReadiness, } from './sentinel-gate.js';
 export type { SentinelReadinessOptions, SentinelGateResult, SentinelWaitOptions, SentinelWaitResult, } from './sentinel-gate.js';
 export type { CliAgentType, CliAgentContract, WorkerLaunchConfig } from './model-contract.js';

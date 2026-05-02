@@ -304,6 +304,8 @@ export {
 } from './orchestrator.js';
 export type { TeamPhase as TeamPipelinePhase, TeamState as TeamOrchestratorState, TerminalPhase as TeamTerminalPhase } from './orchestrator.js';
 
+export { readTeamPaneStatus } from './pane-status.js';
+
 export {
   checkSentinelReadiness,
   waitForSentinelReadiness,

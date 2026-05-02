@@ -37,6 +37,7 @@ export { appendTeamCommitHygieneEntries, buildTeamCommitHygieneContext, readTeam
 export { buildRepoAwareTeamExecutionPlan, remapRepoAwareDecompositionMetadataToCreatedTasks, } from './repo-aware-decomposition.js';
 export { assertCleanLeaderWorkspaceForWorkerWorktrees, ensureWorktree, isGitRepository, isWorktreeDirty, parseWorktreeMode, planWorktreeTarget, readWorkspaceStatusLines, removeWorktreeForce, rollbackProvisionedWorktrees, } from './worktree.js';
 export { canResumeTeamState, createTeamState, getPhaseAgents, getPhaseInstructions, isTerminalPhase as isTerminalTeamOrchestratorPhase, isValidTransition, transitionPhase as transitionTeamOrchestratorPhase, } from './orchestrator.js';
+export { readTeamPaneStatus } from './pane-status.js';
 export { checkSentinelReadiness, waitForSentinelReadiness, } from './sentinel-gate.js';
 export { getContract, isCliAvailable as isCliAvailableForAgent, validateCliAvailable as validateCliAvailableForAgent, buildLaunchArgs, buildWorkerCommand, parseCliOutput, 
 // Deprecated backward-compat exports kept for downstream consumers.
