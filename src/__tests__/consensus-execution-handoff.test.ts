@@ -282,11 +282,11 @@ describe('Issue #2945: planning modules require explicit execution consent', () 
     const skill = getBuiltinSkill('deep-interview');
     expect(skill).toBeDefined();
 
-    expect(skill!.template).toContain('explicit approval → execution');
+    expect(skill!.template).toContain('pending approval → explicitly approved execution');
     expect(skill!.template).toContain('mark it `pending approval`');
     expect(skill!.template).toMatch(/MUST NOT run mutation-oriented shell commands/i);
     expect(skill!.template).toMatch(/open PRs, invoke execution skills, or delegate implementation tasks/i);
-    expect(skill!.template).toContain('do not automatically invoke autopilot unless the user explicitly approves that execution handoff');
+    expect(skill!.template).toContain('do not automatically invoke autopilot or any other execution skill');
     expect(skill!.template).toContain('Without explicit execution selection, stop with the spec marked `pending approval`.');
     expect(skill!.template).not.toContain('autopilot with consensus plan');
   });
