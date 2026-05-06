@@ -185,8 +185,8 @@ Advanced: ambiguity ≤ 20%
       `---
 name: deep-interview
 description: Deep interview
-pipeline: [deep-interview, omc-plan, autopilot]
-next-skill: omc-plan
+pipeline: [deep-interview, plan, autopilot]
+next-skill: plan
 next-skill-args: --consensus --direct
 handoff: .omc/specs/deep-interview-{slug}.md
 ---
@@ -203,9 +203,9 @@ Deep interview body`
 
     expect(result.success).toBe(true);
     expect(result.replacementText).toContain('## Skill Pipeline');
-    expect(result.replacementText).toContain('Pipeline: `deep-interview → omc-plan → autopilot`');
+    expect(result.replacementText).toContain('Pipeline: `deep-interview → plan → autopilot`');
     expect(result.replacementText).toContain('Next skill arguments: `--consensus --direct`');
-    expect(result.replacementText).toContain('Skill("oh-my-claudecode:omc-plan")');
+    expect(result.replacementText).toContain('Skill("oh-my-claudecode:plan")');
     expect(result.replacementText).toContain('`.omc/specs/deep-interview-{slug}.md`');
   });
 
@@ -249,8 +249,8 @@ Compatibility body`
       `---
 name: deep-interview
 description: Deep interview
-pipeline: [deep-interview, omc-plan, autopilot]
-next-skill: omc-plan
+pipeline: [deep-interview, plan, autopilot]
+next-skill: plan
 next-skill-args: --consensus --direct
 handoff: .omc/specs/deep-interview-{slug}.md
 ---
