@@ -7,8 +7,8 @@ triggers:
   - "deep-dive"
   - "trace and interview"
   - "investigate deeply"
-pipeline: [deep-dive, omc-plan, autopilot]
-next-skill: omc-plan
+pipeline: [deep-dive, plan, autopilot]
+next-skill: plan
 next-skill-args: --consensus --direct
 handoff: .omc/specs/deep-dive-{slug}.md
 ---
@@ -322,7 +322,7 @@ If the guidance gate does not apply, or the pre-flight passes, present execution
 
 1. **Ralplan → Autopilot (Recommended)**
    - Description: "3-stage pipeline: consensus-refine this spec with Planner/Architect/Critic, then execute with full autopilot. Maximum quality."
-   - Action: Invoke `Skill("oh-my-claudecode:omc-plan")` with `--consensus --direct` flags and the spec file path (`spec_path` from state) as context. The `--direct` flag skips the omc-plan skill's interview phase (the deep-dive interview already gathered requirements), while `--consensus` triggers the Planner/Architect/Critic loop. When consensus completes and produces a plan in `.omc/plans/`, invoke `Skill("oh-my-claudecode:autopilot")` with the consensus plan as Phase 0+1 output — autopilot skips both Expansion and Planning, starting directly at Phase 2 (Execution).
+   - Action: Invoke `Skill("oh-my-claudecode:plan")` with `--consensus --direct` flags and the spec file path (`spec_path` from state) as context. The `--direct` flag skips the omc-plan skill's interview phase (the deep-dive interview already gathered requirements), while `--consensus` triggers the Planner/Architect/Critic loop. When consensus completes and produces a plan in `.omc/plans/`, invoke `Skill("oh-my-claudecode:autopilot")` with the consensus plan as Phase 0+1 output — autopilot skips both Expansion and Planning, starting directly at Phase 2 (Execution).
    - Pipeline: `deep-dive spec → omc-plan --consensus --direct → autopilot execution`
 
 2. **Execute with autopilot (skip ralplan)**
