@@ -15,6 +15,20 @@
     "orchestration",
     "automation"
   ],
-  "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "skills": [
+    "./skills/ai-slop-cleaner/",
+    "./skills/autopilot/",
+    "./skills/cancel/",
+    "./skills/deep-interview/",
+    "./skills/omc-reference/",
+    "./skills/plan/",
+    "./skills/ralph/",
+    "./skills/ralplan/",
+    "./skills/setup/",
+    "./skills/team/",
+    "./skills/ultraqa/",
+    "./skills/ultrawork/"
+  ],
+  "mcpServers": "./.mcp.json",
+  "commands": "./commands/"
 }
