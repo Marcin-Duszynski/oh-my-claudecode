@@ -274,14 +274,17 @@ describe('Builtin Skills', () => {
       expect(skill?.template).toContain('Ranked Hypotheses');
       expect(skill?.template).toContain('trace_timeline');
       expect(skill?.template).toContain('trace_summary');
+      expect(skill?.template).toContain('multi-entity premise/key-assumption mismatches');
+      expect(skill?.template).toContain('single dimensional key across distinct entities, tenants, streams, or groups');
+      expect(skill?.template).toContain('verification-methodology defect');
     });
     it('should retrieve the deep-dive skill with pipeline metadata and 3-point injection', () => {
       const skill = getBuiltinSkill('deep-dive');
       expect(skill).toBeDefined();
       expect(skill?.name).toBe('deep-dive');
       expect(skill?.pipeline).toEqual({
-        steps: ['deep-dive', 'omc-plan', 'autopilot'],
-        nextSkill: 'omc-plan',
+        steps: ['deep-dive', 'plan', 'autopilot'],
+        nextSkill: 'plan',
         nextSkillArgs: '--consensus --direct',
         handoff: '.omc/specs/deep-dive-{slug}.md',
       });
@@ -292,9 +295,24 @@ describe('Builtin Skills', () => {
       expect(skill?.template).toContain('initial question queue injection');
       // Verify per-lane critical unknowns (B3 fix)
       expect(skill?.template).toContain('Per-Lane Critical Unknowns');
+      // Verify Lane 3 multi-entity premise audit guard (#2949)
+      expect(skill?.template).toContain('multi-entity premise/key-assumption mismatches');
+      expect(skill?.template).toContain('single dimensional key across distinct entities, tenants, streams, or groups');
+      expect(skill?.template).toContain('verification-methodology defect');
+      // Verify Lane 3 ownership-boundary classification for MOVE recommendations
+      expect(skill?.template).toContain('Lane 3 Misplacement / SoT Ownership Scope');
+      expect(skill?.template).toContain('ownership_scope');
+      expect(skill?.template).toContain('personal-config/shared-config/external/project-scoped');
+      expect(skill?.template).toContain('Cross-boundary MOVE candidates MUST have `Default? = no`');
       // Verify pipeline handoff is fully wired (B1 fix)
       expect(skill?.template).toContain('Skill("oh-my-claudecode:autopilot")');
       expect(skill?.template).toContain('consensus plan as Phase 0+1 output');
+      // Verify Phase 5 workflow pre-flight guards issue/worktree-driven project guidance (#2926)
+      expect(skill?.template).toContain('Workflow Pre-Flight');
+      expect(skill?.template).toContain('issue-driven, worktree-driven, branch-first');
+      expect(skill?.template).toContain('git worktree list --porcelain');
+      expect(skill?.template).toContain('Set up issue/branch/worktree first (Recommended)');
+      expect(skill?.template).toContain('before showing execution options');
       // Verify untrusted data guard (NB1 fix)
       expect(skill?.template).toContain('trace-context');
       expect(skill?.template).toContain('untrusted data');
@@ -308,18 +326,24 @@ describe('Builtin Skills', () => {
 
 
 
-    it('should expose pipeline metadata for deep-interview handoff into omc-plan', () => {
+    it('should expose approval-gated pipeline metadata for deep-interview handoff into omc-plan', () => {
       const skill = getBuiltinSkill('deep-interview');
       expect(skill?.pipeline).toEqual({
-        steps: ['deep-interview', 'omc-plan', 'autopilot'],
-        nextSkill: 'omc-plan',
-        nextSkillArgs: '--consensus --direct',
+        steps: ['deep-interview', 'plan'],
+        nextSkill: undefined,
+        nextSkillArgs: undefined,
         handoff: '.omc/specs/deep-interview-{slug}.md',
+        handoffRequiresApproval: true,
       });
       expect(skill?.template).toContain('## Skill Pipeline');
-      expect(skill?.template).toContain('Pipeline: `deep-interview → omc-plan → autopilot`');
-      expect(skill?.template).toContain('Skill("oh-my-claudecode:omc-plan")');
-      expect(skill?.template).toContain('`--consensus --direct`');
+      expect(skill?.template).toContain('Pipeline: `deep-interview → plan`');
+      expect(skill?.template).toContain('This stage is approval-gated');
+      expect(skill?.template).toContain('unless the user explicitly approves that next step');
+      expect(skill?.template).not.toContain('Pipeline: `deep-interview → plan → autopilot`');
+      expect(skill?.template).not.toContain('Next skill: `plan`');
+      expect(skill?.template).not.toContain('3. Invoke Skill("oh-my-claudecode:plan")');
+      expect(skill?.template).toContain('Only after the user selects this option, invoke `Skill("oh-my-claudecode:plan")`');
+      expect(skill?.template).toContain('do not automatically invoke autopilot or any other execution skill');
       expect(skill?.template).toContain('`.omc/specs/deep-interview-{slug}.md`');
       expect(skill?.template).toContain('Why now: {one_sentence_targeting_rationale}');
       expect(skill?.template).toContain('cite the repo evidence');
@@ -328,6 +352,40 @@ describe('Builtin Skills', () => {
       expect(skill?.argumentHint).toContain('--autoresearch');
       expect(skill?.template).toContain('zero-learning-curve setup lane for the stateful `autoresearch` skill');
       expect(skill?.template).toContain('Skill("oh-my-claudecode:autoresearch")');
+    });
+
+    it('documents deep-interview Round 0 topology locking and multi-component scoring (issue #2919)', () => {
+      const skill = getBuiltinSkill('deep-interview');
+      expect(skill).toBeDefined();
+      const t = skill!.template;
+      const fourComponentFixture = [
+        'Ingestion',
+        'Normalization',
+        'Review UI',
+        'Export',
+      ];
+
+      expect(t).toContain('Round 0: Topology Enumeration Gate');
+      expect(t).toContain('before any Phase 2 ambiguity scoring');
+      expect(t).toContain('"topology": {');
+      expect(t).toContain('"confirmed_at": null');
+      expect(t).toContain('"components": []');
+      expect(t).toContain('"last_targeted_component_id": null');
+      expect(t).toContain('"status": "legacy_missing"');
+      expect(t).toContain('score every active component independently');
+      expect(t).toContain('rotate targeting across active components');
+      expect(t).toContain('topology.last_targeted_component_id');
+      expect(t).toContain('## Topology');
+      expect(t).toContain('user-confirmed deferral reason');
+      expect(t).toContain('Phase 4 must cover each confirmed component in `## Topology` or explicitly list a user-confirmed deferral');
+      expect(t).toContain('Review UI` is the one detailed component');
+      expect(t).toContain('must not collapse or stand in for the less-detailed sibling components');
+      expect(t).toContain('until every active component has sufficient goal/constraint/criteria clarity');
+      expect(t).toContain('cover each confirmed component in `## Topology`');
+
+      for (const component of fourComponentFixture) {
+        expect(t).toContain(component);
+      }
     });
 
     it('loads deep-interview ambiguityThreshold from settings before state init and updates the announcement copy', () => {
@@ -444,6 +502,23 @@ describe('Builtin Skills', () => {
       expect(raw).toContain('`.omc/specs/deep-interview-{slug}.md` exactly');
       expect(raw).toContain('Ephemeral interview artifacts');
       expect(raw).toContain('`.omc/state/` or in-memory state via `state_write`');
+      expect(raw).toContain('Round 0: Topology Enumeration Gate');
+      expect(raw).toContain('before any Phase 2 ambiguity scoring');
+      expect(raw).toContain('"topology": {');
+      expect(raw).toContain('"confirmed_at": null');
+      expect(raw).toContain('"components": []');
+      expect(raw).toContain('"last_targeted_component_id": null');
+      expect(raw).toContain('"status": "legacy_missing"');
+      expect(raw).toContain('rotate targeting across active components');
+      expect(raw).toContain('## Topology');
+      expect(raw).toContain('Ingestion');
+      expect(raw).toContain('Normalization');
+      expect(raw).toContain('Review UI');
+      expect(raw).toContain('Export');
+      expect(raw).toContain('Review UI` is the one detailed component');
+      expect(raw).toContain('must not collapse or stand in for the less-detailed sibling components');
+      expect(raw).toContain('until every active component has sufficient goal/constraint/criteria clarity');
+      expect(raw).toContain('cover each confirmed component in `## Topology`');
 
       expect(raw).not.toContain('omx question');
       expect(raw).not.toContain('(default: 20%)');
@@ -575,16 +650,22 @@ describe('Builtin Skills', () => {
       expect(skill?.template).toContain('markdown decision logs');
     });
 
-    it('should expose pipeline metadata for omc-plan handoff into autopilot', () => {
+    it('should expose approval-gated omc-plan metadata without an unconditional autopilot handoff', () => {
       const skill = getBuiltinSkill('omc-plan');
       expect(skill?.pipeline).toEqual({
-        steps: ['deep-interview', 'omc-plan', 'autopilot'],
-        nextSkill: 'autopilot',
+        steps: ['deep-interview'],
+        nextSkill: undefined,
+        nextSkillArgs: undefined,
         handoff: '.omc/plans/ralplan-*.md',
+        handoffRequiresApproval: true,
       });
       expect(skill?.template).toContain('## Skill Pipeline');
-      expect(skill?.template).toContain('Next skill: `autopilot`');
-      expect(skill?.template).toContain('Skill("oh-my-claudecode:autopilot")');
+      expect(skill?.template).toContain('Pipeline: `deep-interview → omc-plan`');
+      expect(skill?.template).toContain('This stage is approval-gated');
+      expect(skill?.template).toContain('unless the user explicitly approves that next step');
+      expect(skill?.template).not.toContain('Next skill: `autopilot`');
+      expect(skill?.template).not.toContain('Skill("oh-my-claudecode:autopilot")');
+      expect(skill?.template).not.toContain('3. Invoke Skill("oh-my-claudecode:autopilot")');
       expect(skill?.template).toContain('`.omc/plans/ralplan-*.md`');
     });
 
@@ -601,6 +682,19 @@ describe('Builtin Skills', () => {
       expect(skill?.template).toContain('--review');
       expect(skill?.template).toContain('Writer pass');
       expect(skill?.template).toContain('Reviewer pass');
+    });
+
+    it('should expose UI/design AI-slop review signals', () => {
+      const skill = getBuiltinSkill('ai-slop-cleaner');
+      expect(skill).toBeDefined();
+      expect(skill?.template).toContain('UI/Design Reviewer Checklist');
+      expect(skill?.template).toContain('Korean body copy generally needs at least 14px');
+      expect(skill?.template).toContain('box shadows on every surface');
+      expect(skill?.template).toContain('eyebrow/title/description');
+      expect(skill?.template).toContain('#3B82F6');
+      expect(skill?.template).toContain('3- or 4-column uniform grids');
+      expect(skill?.template).toContain('extreme gradients');
+      expect(skill?.template).toContain('intentional brand');
     });
 
     it('should require explicit tmux prerequisite checks for omc-teams', () => {

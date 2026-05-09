@@ -666,7 +666,7 @@ $ ultrawork search the codebase`,
                 rmSync(tempDir, { recursive: true, force: true });
             }
         });
-        it('activates ralplan state when Skill tool invokes omc-plan in consensus mode', async () => {
+        it('activates ralplan state when Skill tool invokes plan in consensus mode', async () => {
             const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-plan-consensus-skill-'));
             try {
                 execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
@@ -675,7 +675,7 @@ $ ultrawork search the codebase`,
                     sessionId,
                     toolName: 'Skill',
                     toolInput: {
-                        skill: 'oh-my-claudecode:omc-plan',
+                        skill: 'oh-my-claudecode:plan',
                         args: '--consensus issue #1926',
                     },
                     directory: tempDir,

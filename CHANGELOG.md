@@ -1,59 +1,49 @@
-# oh-my-claudecode v4.13.6: Reliability & macOS Hardening
+# oh-my-claudecode v4.13.7: add multi-entity premise, add ownership scope, pre-flight workflow setup
 
 ## Release Notes
 
-Bug fixes for session lifecycle, macOS launch path, and team auth, plus reviewer/designer agent upgrades for Opus 4.7. Net delivery is **14 PRs**: the omx-teams backport (#2903) shipped and was reverted (#2910) within the window, so team-runtime behavior matches v4.13.5.
+Release with **3 new features**, **9 bug fixes**, **13 other changes** across **25 merged PRs**.
+
+### Highlights
+
+- **feat(deep-dive): add multi-entity premise audit** (#2950)
+- **feat(deep-dive): add ownership scope to Lane 3 moves** (#2930)
+- **feat(deep-dive): pre-flight workflow setup before execution** (#2928)
 
 ### New Features
 
-- **`--madmax`/`--yolo` now require tmux on macOS** (#2909)
-- **Designer agent: domain-aware override of Opus 4.7 editorial defaults** (#2893)
-- **Code-reviewer agent: discovery/filter separation for Opus 4.7** (#2892)
-- **Planning artifacts: timestamp canonical handoff files** (#2894)
-- **Pre-tool: warn on fallback slop language** (#2878)
+- **feat(deep-dive): add multi-entity premise audit** (#2950)
+- **feat(deep-dive): add ownership scope to Lane 3 moves** (#2930)
+- **feat(deep-dive): pre-flight workflow setup before execution** (#2928)
 
 ### Bug Fixes
 
-- **Stop hook: clean up orphan session state** (#2912, fixes #2911)
-- **Cancel: clear Ralph stop hook artifacts** (#2897)
-- **Persistent mode: ignore orphan autopilot routing echo** (#2899)
-- **Launch: preserve Claude auth in runtime config** (#2908, fixes #2906)
-- **Team: use claude bare mode with API key auth** (#2890)
-- **Team: require delegation evidence for broad completions** (#2895)
-- **Autoresearch: stop discarding the first passing candidate** (#2905, by @stevenmorrisroe)
-- **Project memory: keep detector authoritative for schema-known fields on rescan** (#2883)
-- **Project memory: preserve unknown fields across rescan** (#2882)
-- **Wiki: honor `workingDirectory` for manual worktrees** (#2880)
-- **Post-tool verifier: recognize Edit success output** (#2877)
+- **fix(launch): preserve Windows plugin root paths** (#2963)
+- **fix(keyword-detector): skip deep-interview routing on Ouroboros CLI invocations** (#2955)
+- **fix: mirror themes in omc launch profile** (#2953)
+- **fix(planning): require execution consent for planning modules** (#2946)
+- **fix(skills): gate default plugin skill budget** (#2944)
+- **fix(pre-tool-enforcer): reduce SLOP fallback false positives** (#2941)
+- **fix(update): authenticate GitHub release fetches** (#2937)
+- **fix(skills): use plan skill id for consensus handoffs** (#2932)
+- **fix(pre-tool-enforcer): reduce SLOP fallback false positives** (#2929)
 
 ### Other Changes
 
-- **Docs: explain prebuild-install warning** (#2914, fixes #2913)
-- **Reverted: omx-teams backport (#2903)** — reverted by #2910
+- **Check Ralph Ruby dependency during setup** (#2970)
+- **Fix ultrawork Stop-hook prompt echo loop** (#2972)
+- **Fix hook background notification output isolation** (#2966)
+- **Fix stale terminal workflow skill-active slots** (#2965)
+- **Fix managed helper launches to use current JS runtime** (#2964)
+- **Fix omc-setup jq config truncation guard** (#2958)
+- **Add UI design anti-slop signals** (#2956)
+- **Fix Claude worker startup notification readiness** (#2948)
+- **Fix built-in Task tool spawn warnings** (#2940)
+- **Fix Ralph stop-hook during pending async work** (#2934)
+- **Fix wiki PreCompact hook output schema** (#2924)
+- **Add deep-interview Round 0 topology gate** (#2920)
+- **Keep OMX runtime cache out of git status** (#2917)
 
 ### Stats
 
-- **14 PRs net** | **5 features** | **11 fixes** | **1 docs** | **1 backport reverted**
-
-### Contributors
-
-@devswha @EthanJStark @RobinNorberg @stevenmorrisroe @Yeachan-Heo
-
----
-
-# oh-my-claudecode v4.13.5: Maintenance Release
-
-## Release Notes
-
-Release with **4 other changes** across **4 merged PRs**.
-
-### Other Changes
-
-- **Fix Max HUD rate limits with enterprise spend cache data** (#2850)
-- **Fix session-scoped Ralph PRD state** (#2848)
-- **Fix HUD statusLine cold-start flicker** (#2844)
-- **Fix stale Ralph stop hook after cancel** (#2833)
-
-### Stats
-
-- **4 PRs merged** | **0 new features** | **0 bug fixes** | **0 security/hardening improvements** | **4 other changes**
+- **25 PRs merged** | **3 new features** | **9 bug fixes** | **0 security/hardening improvements** | **13 other changes**

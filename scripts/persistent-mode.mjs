@@ -182,6 +182,7 @@ Do NOT skip this step. Do NOT move on without fixing the error.
  * from causing the stop hook to malfunction in new sessions.
  */
 const STALE_STATE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+const PENDING_ASYNC_STATE_STALE_MS = 24 * 60 * 60 * 1000;
 const CANCEL_SIGNAL_TTL_MS = 30_000;
 const TEAM_TERMINAL_PHASES = new Set([
   "completed",
@@ -227,6 +228,66 @@ function isStaleState(state) {
 
   const age = Date.now() - mostRecent;
   return age > STALE_STATE_THRESHOLD_MS;
+}
+
+
+function parseTimestamp(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isFreshTimestamp(value, ttlMs = PENDING_ASYNC_STATE_STALE_MS) {
+  const parsed = parseTimestamp(value);
+  return parsed !== null && Date.now() - parsed <= ttlMs;
+}
+
+function hasPendingBackgroundTask(stateDir, sessionId) {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  const hudPath = safeSessionId
+    ? join(stateDir, "sessions", safeSessionId, "hud-state.json")
+    : join(stateDir, "hud-state.json");
+  const hudState = readJsonFile(hudPath);
+  return Boolean(hudState?.backgroundTasks?.some((task) => {
+    if (task?.status !== "running") return false;
+    return isFreshTimestamp(task.startedAt ?? task.startTime);
+  }));
+}
+
+function readPendingWakeupStates(stateDir, sessionId) {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  const dirs = safeSessionId ? [join(stateDir, "sessions", safeSessionId), stateDir] : [stateDir];
+  const fileNames = ["scheduled-wakeup-state.json", "schedule-wakeup-state.json", "wakeup-state.json"];
+  const states = [];
+  for (const dir of dirs) {
+    for (const fileName of fileNames) {
+      const state = readJsonFile(join(dir, fileName));
+      if (state && typeof state === "object") states.push(state);
+    }
+  }
+  return states;
+}
+
+function hasPendingScheduledWakeup(stateDir, sessionId) {
+  const now = Date.now();
+  return readPendingWakeupStates(stateDir, sessionId).some((state) => {
+    const status = typeof state.status === "string" ? state.status.toLowerCase() : "";
+    if (["completed", "complete", "cancelled", "canceled", "failed", "expired"].includes(status)) {
+      return false;
+    }
+    const dueAt = parseTimestamp(
+      state.due_at ?? state.wakeup_at ?? state.scheduled_for ?? state.deadline_at ?? state.expires_at,
+    );
+    if (dueAt !== null) return dueAt > now;
+    if (state.active === true || state.pending === true) {
+      return isFreshTimestamp(state.created_at ?? state.updated_at ?? state.started_at);
+    }
+    return false;
+  });
+}
+
+function hasPendingOwnedAsyncWork(stateDir, sessionId) {
+  return hasPendingBackgroundTask(stateDir, sessionId) || hasPendingScheduledWakeup(stateDir, sessionId);
 }
 
 function normalizeTeamPhase(state) {
@@ -554,6 +615,45 @@ function countIncompleteTodos(sessionId, projectDir) {
   return count;
 }
 
+
+const ULTRAWORK_OBJECTIVE_MAX_CHARS = 140;
+
+function firstStringValue(source, keys) {
+  if (!source || typeof source !== "object") return "";
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function formatConciseObjective(value, maxChars = ULTRAWORK_OBJECTIVE_MAX_CHARS) {
+  if (typeof value !== "string") return "";
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  const chars = [...compact];
+  if (chars.length <= maxChars) return compact;
+  return `${chars.slice(0, maxChars).join("").trimEnd()}…`;
+}
+
+function getLiveUltraworkObjective(state) {
+  const objective = firstStringValue(state, [
+    "current_objective",
+    "currentObjective",
+    "objective_summary",
+    "objectiveSummary",
+    "task_summary",
+    "taskSummary",
+    "current_task",
+    "currentTask",
+    "active_task",
+    "activeTask",
+  ]);
+  return formatConciseObjective(objective);
+}
+
 /**
  * Detect if stop was triggered by context-limit related reasons.
  * When context is exhausted, Claude Code needs to stop so it can compact.
@@ -747,6 +847,11 @@ async function main() {
     }
 
     if (isScheduledWakeupStop(data)) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
+      return;
+    }
+
+    if (hasPendingOwnedAsyncWork(stateDir, sessionId)) {
       console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
@@ -1191,17 +1296,18 @@ async function main() {
 
       if (totalIncomplete > 0) {
         const itemType = taskCount > 0 ? "Tasks" : "todos";
-        reason += ` ${totalIncomplete} incomplete ${itemType} remain. Continue working.`;
+        reason += ` ${totalIncomplete} incomplete ${itemType} remain. Continue working. When all work is complete, run /oh-my-claudecode:cancel to cleanly exit ultrawork mode and clean up state files.`;
       } else if (newCount >= 3) {
-        // Only suggest cancel after minimum iterations (guard against no-tasks-created scenario)
+        // Reinforce clean-exit guidance once no tracked work remains.
         reason += ` If all work is complete, run /oh-my-claudecode:cancel to cleanly exit ultrawork mode and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force. Otherwise, continue working.`;
       } else {
-        // Early iterations with no tasks yet - just tell LLM to continue
-        reason += ` Continue working - create Tasks to track your progress.`;
+        // Early iterations with no tasks yet still need an immediately visible exit path.
+        reason += ` No incomplete tasks detected. If all work is complete, run /oh-my-claudecode:cancel to cleanly exit ultrawork mode and clean up state files. Otherwise, continue working - create Tasks to track your progress.`;
       }
 
-      if (ultrawork.state.original_prompt) {
-        reason += `\nTask: ${ultrawork.state.original_prompt}`;
+      const currentObjective = getLiveUltraworkObjective(ultrawork.state);
+      if (currentObjective) {
+        reason += `\nCurrent objective: ${currentObjective}`;
       }
 
       if (errorGuidance) {
