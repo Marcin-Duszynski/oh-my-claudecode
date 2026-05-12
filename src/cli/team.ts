@@ -12,6 +12,7 @@ import { monitorTeam, resumeTeam, shutdownTeam } from '../team/runtime.js';
 import { readTeamConfig } from '../team/monitor.js';
 import { isProcessAlive } from '../platform/index.js';
 import { getGlobalOmcStatePath } from '../utils/paths.js';
+import { readApprovedExecutionLaunchHintOutcome } from '../planning/artifacts.js';
 
 const JOB_ID_PATTERN = /^omc-[a-z0-9]{1,16}$/;
 const VALID_CLI_AGENT_TYPES = new Set(['claude', 'codex', 'gemini', 'cursor']);
@@ -69,6 +70,7 @@ interface TeamLegacyStartArgs {
   json: boolean;
   cwd: string;
   newWindow?: boolean;
+  autoMerge?: boolean;
 }
 
 export interface TeamTaskInput {
@@ -86,6 +88,12 @@ export interface TeamStartInput {
   pollIntervalMs?: number;
   sentinelGateTimeoutMs?: number;
   sentinelGatePollIntervalMs?: number;
+  /**
+   * When true, the v2 runtime starts the merge orchestrator: per-commit
+   * auto-merge to the leader branch and auto-rebase fanout to other workers.
+   * Equivalent to setting OMC_TEAMS_AUTO_MERGE=1. Requires OMC_RUNTIME_V2=1.
+   */
+  autoMerge?: boolean;
 }
 
 export interface TeamStartResult {
@@ -388,7 +396,7 @@ export async function startTeamJob(input: TeamStartInput): Promise<TeamStartResu
     cwd: input.cwd,
   };
 
-  const child = spawn('node', [runtimeCliPath], {
+  const child = spawn(process.execPath, [runtimeCliPath], {
     env: {
       ...process.env,
       OMC_JOB_ID: jobId,
@@ -408,6 +416,7 @@ export async function startTeamJob(input: TeamStartInput): Promise<TeamStartResu
     pollIntervalMs: input.pollIntervalMs,
     sentinelGateTimeoutMs: input.sentinelGateTimeoutMs,
     sentinelGatePollIntervalMs: input.sentinelGatePollIntervalMs,
+    autoMerge: input.autoMerge,
   };
 
   if (child.stdin && typeof child.stdin.on === 'function') {
@@ -784,7 +793,7 @@ export async function teamCleanupCommand(
 
 export const TEAM_USAGE = `
 Usage:
-  omc team start --agent <claude|codex|gemini|cursor>[,<agent>...] --task "<task>" [--count N] [--name TEAM] [--cwd DIR] [--new-window] [--json]
+  omc team start --agent <claude|codex|gemini|cursor>[,<agent>...] --task "<task>" [--count N] [--name TEAM] [--cwd DIR] [--new-window] [--auto-merge] [--json]
   omc team status <job_id|team_name> [--json] [--cwd DIR]
   omc team wait <job_id> [--timeout-ms MS] [--json]
   omc team cleanup <job_id> [--grace-ms MS] [--json]
@@ -796,6 +805,13 @@ Usage:
 Worktrees:
   Native per-worker git worktree mode is opt-in/config-gated with team.ops.worktreeMode or OMC_TEAM_WORKTREE_MODE=detached|named.
   Status JSON includes workspace_mode, worktree_mode, team_state_root, and per-worker worktree metadata.
+
+Auto-merge (v2-only):
+  --auto-merge          Enable per-commit auto-merge to leader and auto-rebase fanout.
+                        Each worker runs in a dedicated git worktree on omc-team/{team}/{worker}.
+                        Bursts of rapid worker commits coalesce to a single merge of HEAD.
+                        Requires OMC_RUNTIME_V2=1. Leader branch must not be 'main' or 'master'.
+                        Equivalent to OMC_TEAMS_AUTO_MERGE=1.
 
 Examples:
   omc team start --agent codex --count 2 --task "review auth flow" --new-window
@@ -828,6 +844,8 @@ function parseStartArgs(args: string[]): StartArgsParsed {
   let pollIntervalMs: number | undefined;
   let sentinelGateTimeoutMs: number | undefined;
   let sentinelGatePollIntervalMs: number | undefined;
+  // --auto-merge / OMC_TEAMS_AUTO_MERGE=1 enables the merge orchestrator (v2-only).
+  let autoMerge: boolean = process.env.OMC_TEAMS_AUTO_MERGE === '1';
 
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
@@ -839,6 +857,10 @@ function parseStartArgs(args: string[]): StartArgsParsed {
     }
     if (token === '--new-window') {
       newWindow = true;
+      continue;
+    }
+    if (token === '--auto-merge') {
+      autoMerge = true;
       continue;
     }
 
@@ -980,6 +1002,7 @@ function parseStartArgs(args: string[]): StartArgsParsed {
       ...(pollIntervalMs != null ? { pollIntervalMs } : {}),
       ...(sentinelGateTimeoutMs != null ? { sentinelGateTimeoutMs } : {}),
       ...(sentinelGatePollIntervalMs != null ? { sentinelGatePollIntervalMs } : {}),
+      ...(autoMerge ? { autoMerge: true } : {}),
     },
     json,
   };
@@ -1201,16 +1224,17 @@ function parseLegacyStartAlias(args: string[]): TeamLegacyStartArgs | null {
   const match = spec.match(/^(\d+):([a-zA-Z0-9_-]+)(?::([a-zA-Z0-9_-]+))?$/);
   if (!match) return null;
 
-  const workerCount = toInt(match[1], 'worker-count');
+  let workerCount = toInt(match[1], 'worker-count');
   if (workerCount < 1) throw new Error('worker-count must be >= 1');
 
-  const agentType = normalizeAgentType(match[2]);
+  let agentType = normalizeAgentType(match[2]);
   const role = match[3] || undefined;
   index += 1;
 
   let json = false;
   let cwd = process.cwd();
   let newWindow = false;
+  let autoMerge: boolean = process.env.OMC_TEAMS_AUTO_MERGE === '1';
   const taskParts: string[] = [];
   for (let i = index; i < args.length; i += 1) {
     const token = args[i];
@@ -1222,6 +1246,10 @@ function parseLegacyStartAlias(args: string[]): TeamLegacyStartArgs | null {
     }
     if (token === '--new-window') {
       newWindow = true;
+      continue;
+    }
+    if (token === '--auto-merge') {
+      autoMerge = true;
       continue;
     }
     if (token === '--cwd') {
@@ -1238,8 +1266,38 @@ function parseLegacyStartAlias(args: string[]): TeamLegacyStartArgs | null {
     taskParts.push(token);
   }
 
-  const task = taskParts.join(' ').trim();
+  let task = taskParts.join(' ').trim();
   if (!task) throw new Error('Legacy start alias requires a task string');
+
+  const shortFollowup = ['team', '/team', 'team please', 'run team', 'start team'].includes(task.toLowerCase());
+  if (shortFollowup) {
+    const approvedHintOutcome = readApprovedExecutionLaunchHintOutcome(cwd, 'team', {
+      requirePlanningComplete: true,
+    });
+    if (approvedHintOutcome.status === 'ambiguous') {
+      throw new Error('approved_execution_hint_ambiguous:team');
+    }
+    if (approvedHintOutcome.status === 'incomplete') {
+      throw new Error('approved_execution_hint_incomplete:team');
+    }
+    if (approvedHintOutcome.status === 'resolved') {
+      task = approvedHintOutcome.hint.task;
+      workerCount = approvedHintOutcome.hint.workerCount ?? workerCount;
+      agentType = approvedHintOutcome.hint.agentType
+        ? normalizeAgentType(approvedHintOutcome.hint.agentType)
+        : agentType;
+      ralph = approvedHintOutcome.hint.linkedRalph === true ? true : ralph;
+    }
+  } else {
+    const command = `omc team ${ralph ? 'ralph ' : ''}${spec} ${JSON.stringify(task)}`;
+    const approvedHintOutcome = readApprovedExecutionLaunchHintOutcome(cwd, 'team', {
+      task,
+      command,
+    });
+    if (approvedHintOutcome.status === 'ambiguous') {
+      throw new Error('approved_execution_hint_ambiguous:team');
+    }
+  }
 
   return {
     workerCount,
@@ -1251,6 +1309,7 @@ function parseLegacyStartAlias(args: string[]): TeamLegacyStartArgs | null {
     json,
     cwd,
     ...(newWindow ? { newWindow: true } : {}),
+    ...(autoMerge ? { autoMerge: true } : {}),
   };
 }
 
@@ -1340,6 +1399,7 @@ export async function teamCommand(argv: string[]): Promise<void> {
         tasks,
         cwd: legacy.cwd,
         ...(legacy.newWindow ? { newWindow: true } : {}),
+        ...(legacy.autoMerge ? { autoMerge: true } : {}),
       });
 
       output(result, legacy.json);

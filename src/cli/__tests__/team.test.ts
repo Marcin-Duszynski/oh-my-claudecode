@@ -121,7 +121,7 @@ describe('team cli', () => {
     expect(result.pid).toBe(4242);
 
     expect(mocks.spawn).toHaveBeenCalledWith(
-      'node',
+      process.execPath,
       ['/tmp/runtime-cli.cjs'],
       expect.objectContaining({
         detached: true,
@@ -136,6 +136,30 @@ describe('team cli', () => {
     const savedJob = JSON.parse(readFileSync(join(jobsDir, `${result.jobId}.json`), 'utf-8')) as { status: string; pid: number };
     expect(savedJob.status).toBe('running');
     expect(savedJob.pid).toBe(4242);
+  });
+
+  it('startTeamJob uses the current JS runtime instead of PATH node for runtime-cli', async () => {
+    const write = vi.fn();
+    const end = vi.fn();
+    const unref = vi.fn();
+    mocks.spawn.mockReturnValue({
+      pid: 5151,
+      stdin: { write, end },
+      unref,
+    });
+
+    const { startTeamJob } = await import('../team.js');
+
+    await startTeamJob({
+      teamName: 'runtime-team',
+      agentTypes: ['codex'],
+      tasks: [{ subject: 'one', description: 'desc' }],
+      cwd: '/tmp/project',
+    });
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn.mock.calls[0][0]).toBe(process.execPath);
+    expect(mocks.spawn.mock.calls[0][0]).not.toBe('node');
   });
 
   it('teamCommand start --json outputs valid JSON envelope', async () => {
@@ -234,6 +258,136 @@ describe('team cli', () => {
     expect(output.status).toBe('running');
 
     logSpy.mockRestore();
+  });
+
+  it('legacy team alias reuses an approved short follow-up launch hint', async () => {
+    const write = vi.fn();
+    const end = vi.fn();
+    const unref = vi.fn();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const cwd = mkdtempSync(join(tmpdir(), 'omc-team-cli-approved-followup-'));
+    const plansDir = join(cwd, '.omc', 'plans');
+    mkdirSync(plansDir, { recursive: true });
+    writeFileSync(
+      join(plansDir, 'prd-feature.md'),
+      [
+        '# PRD',
+        '',
+        '## Acceptance criteria',
+        '- done',
+        '',
+        '## Requirement coverage map',
+        '- req -> impl',
+        '',
+        'omc team 4:codex "execute approved plan"',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(plansDir, 'test-spec-feature.md'),
+      [
+        '# Test Spec',
+        '',
+        '## Unit coverage',
+        '- unit',
+        '',
+        '## Verification mapping',
+        '- verify',
+        '',
+      ].join('\n'),
+    );
+
+    mocks.spawn.mockReturnValue({
+      pid: 8889,
+      stdin: { write, end },
+      unref,
+    });
+
+    const { teamCommand } = await import('../team.js');
+    await teamCommand(['3:claude', 'team', '--cwd', cwd, '--json']);
+
+    const stdinPayload = JSON.parse(write.mock.calls[0][0] as string) as {
+      agentTypes: string[];
+      tasks: Array<{ description: string }>;
+      workerCount?: number;
+    };
+    expect(stdinPayload.workerCount).toBe(4);
+    expect(stdinPayload.agentTypes).toEqual(['codex', 'codex', 'codex', 'codex']);
+    expect(stdinPayload.tasks).toHaveLength(4);
+    expect(stdinPayload.tasks.every((task) => task.description === 'execute approved plan')).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+    logSpy.mockRestore();
+  });
+
+  it('legacy team alias fails closed for incomplete approved short follow-up hints', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'omc-team-cli-approved-incomplete-'));
+    const plansDir = join(cwd, '.omc', 'plans');
+    mkdirSync(plansDir, { recursive: true });
+    writeFileSync(
+      join(plansDir, 'prd-feature.md'),
+      [
+        '# PRD',
+        '',
+        '## Acceptance criteria',
+        '- done',
+        '',
+        '## Requirement coverage map',
+        '- req -> impl',
+        '',
+        'omc team 4:codex "execute draft plan"',
+        '',
+      ].join('\n'),
+    );
+
+    const { teamCommand } = await import('../team.js');
+    await expect(teamCommand(['3:claude', 'team', '--cwd', cwd, '--json']))
+      .rejects.toThrow('approved_execution_hint_incomplete:team');
+    expect(mocks.spawn).not.toHaveBeenCalled();
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('legacy team alias fails closed for ambiguous approved short follow-up hints', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'omc-team-cli-approved-ambiguous-'));
+    const plansDir = join(cwd, '.omc', 'plans');
+    mkdirSync(plansDir, { recursive: true });
+    writeFileSync(
+      join(plansDir, 'prd-feature.md'),
+      [
+        '# PRD',
+        '',
+        '## Acceptance criteria',
+        '- done',
+        '',
+        '## Requirement coverage map',
+        '- req -> impl',
+        '',
+        'omc team 2:claude "execute alpha"',
+        'omc team 4:codex "execute beta"',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(plansDir, 'test-spec-feature.md'),
+      [
+        '# Test Spec',
+        '',
+        '## Unit coverage',
+        '- unit',
+        '',
+        '## Verification mapping',
+        '- verify',
+        '',
+      ].join('\n'),
+    );
+
+    const { teamCommand } = await import('../team.js');
+    await expect(teamCommand(['3:claude', 'team', '--cwd', cwd, '--json']))
+      .rejects.toThrow('approved_execution_hint_ambiguous:team');
+    expect(mocks.spawn).not.toHaveBeenCalled();
+
+    rmSync(cwd, { recursive: true, force: true });
   });
 
   it('teamCommand start without --json outputs non-JSON', async () => {

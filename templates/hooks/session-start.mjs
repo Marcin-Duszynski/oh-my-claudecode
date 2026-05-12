@@ -55,6 +55,30 @@ function writeJsonFile(path, data) {
   }
 }
 
+
+const SESSION_ID_ALLOWLIST = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/;
+const WORKFLOW_SLOT_TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function isWorkflowSlotTombstonedForMode(directory, mode, sessionId) {
+  const safeSessionId = typeof sessionId === 'string' && SESSION_ID_ALLOWLIST.test(sessionId) ? sessionId : '';
+  const ledgerPath = safeSessionId
+    ? join(directory, '.omc', 'state', 'sessions', safeSessionId, 'skill-active-state.json')
+    : join(directory, '.omc', 'state', 'skill-active-state.json');
+  const ledger = readJsonFile(ledgerPath);
+  const slot = ledger?.active_skills?.[mode];
+  if (!slot || typeof slot !== 'object') return false;
+  if (typeof slot.completed_at !== 'string' || !slot.completed_at) return false;
+  const completedAt = new Date(slot.completed_at).getTime();
+  if (!Number.isFinite(completedAt)) return true;
+  return Date.now() - completedAt < WORKFLOW_SLOT_TOMBSTONE_TTL_MS;
+}
+
+function shouldRestoreModeState(directory, mode, state, sessionId) {
+  if (!state?.active) return false;
+  if (isWorkflowSlotTombstonedForMode(directory, mode, sessionId)) return false;
+  return true;
+}
+
 async function checkForUpdates(currentVersion) {
   const cacheFile = join(homedir(), '.omc', 'update-check.json');
   const now = Date.now();
@@ -119,15 +143,7 @@ const OMC_STARTUP_GUIDANCE_MAX_CHARS = 8000;
 const SESSION_START_CONTEXT_BUDGET = 6000;
 const SESSION_START_OMISSION_NOTICE = '[Additional SessionStart context omitted to preserve the 6000-character aggregate budget.]';
 
-const MODEL_ROUTING_OVERRIDE_MESSAGE = `<system-reminder>
-
-[MODEL ROUTING OVERRIDE — NON-STANDARD PROVIDER DETECTED]
-
-This environment uses a non-standard model provider (AWS Bedrock, Google Vertex AI, or a proxy).
-Do NOT pass the \`model\` parameter on Task/Agent calls. Omit it entirely so agents inherit the parent session's model.
-The CLAUDE.md instruction "Pass model on Task calls: haiku, sonnet, opus" does NOT apply here.
-
-</system-reminder>`;
+const { MODEL_ROUTING_OVERRIDE_MESSAGE } = await import(pathToFileURL(join(__dirname, 'lib', 'model-routing-override-message.mjs')).href);
 
 function isTruthyProviderFlag(value) {
   return value === '1' || value === 'true';
@@ -515,7 +531,7 @@ To update, run: omc update
           ultraworkCandidate.collision.state,
         ),
       );
-    } else if (ultraworkCandidate.restore) {
+    } else if (shouldRestoreModeState(directory, 'ultrawork', ultraworkCandidate.restore, sessionId)) {
       const ultraworkState = ultraworkCandidate.restore;
       messages.push(`<session-restore>
 

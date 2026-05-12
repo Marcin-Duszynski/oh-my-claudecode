@@ -70,6 +70,13 @@ If you prefer the npm CLI/runtime path instead of the marketplace flow:
 npm i -g oh-my-claude-sisyphus@latest
 ```
 
+> **Known npm warning:** npm may print `deprecated prebuild-install@7.1.3` during the CLI install.
+> This currently comes from the upstream `better-sqlite3` native-addon dependency
+> (`better-sqlite3 -> prebuild-install`); `prebuild-install@7.1.3` is still the latest
+> published version, so there is no safe repo-side dependency bump or override to remove
+> the warning yet. The warning is tracked in [#2913](https://github.com/Yeachan-Heo/oh-my-claudecode/issues/2913)
+> and does not by itself mean the OMC CLI install failed.
+
 **Step 2: Setup**
 
 ```bash
@@ -287,7 +294,7 @@ Wrap handler at server.py:42 in try/except ClientDisconnectedError...
 ```
 
 **Manage skills:** `/skill list | add | remove | edit | search`
-**Auto-learn:** `/learner` extracts reusable patterns with strict quality gates
+**Skillify:** `/skillify` extracts reusable patterns with strict quality gates
 **Auto-inject:** Matching skills load into context automatically — no manual recall needed
 
 Project-scoped skills are stored in `.omc/skills/` and are intended to be committed when you want them shared. If you create them inside a linked git worktree and do not commit them, they disappear when that worktree is removed.
@@ -317,7 +324,7 @@ These shortcuts run **inside a Claude Code / OMC session**, not as terminal CLI 
 
 - **ralph includes ultrawork**: when you activate ralph mode, it automatically includes ultrawork's parallel execution.
 - `swarm` compatibility alias has been removed; migrate existing prompts to `/team` syntax.
-- `plan this` / `plan the` keyword triggers were removed; use `ralplan` or explicit `/oh-my-claudecode:omc-plan`.
+- `plan this` / `plan the` keyword triggers were removed; use `ralplan` or explicit `/oh-my-claudecode:plan`.
 
 ## Utilities
 
@@ -532,18 +539,18 @@ MIT
 
 Top personal non-fork, non-archived repos from all-time OMC contributors (100+ GitHub stars).
 
-- [@Yeachan-Heo](https://github.com/Yeachan-Heo) — [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (⭐ 31k)
-- [@junhoyeo](https://github.com/junhoyeo) — [tokscale](https://github.com/junhoyeo/tokscale) (⭐ 2.1k)
-- [@psmux](https://github.com/psmux) — [psmux](https://github.com/psmux/psmux) (⭐ 1.5k)
-- [@BowTiedSwan](https://github.com/BowTiedSwan) — [buildflow](https://github.com/BowTiedSwan/buildflow) (⭐ 290)
-- [@alohays](https://github.com/alohays) — [awesome-visual-representation-learning-with-transformers](https://github.com/alohays/awesome-visual-representation-learning-with-transformers) (⭐ 269)
+- [@Yeachan-Heo](https://github.com/Yeachan-Heo) — [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (⭐ 32k)
+- [@junhoyeo](https://github.com/junhoyeo) — [tokscale](https://github.com/junhoyeo/tokscale) (⭐ 2.3k)
+- [@psmux](https://github.com/psmux) — [psmux](https://github.com/psmux/psmux) (⭐ 1.6k)
+- [@BowTiedSwan](https://github.com/BowTiedSwan) — [buildflow](https://github.com/BowTiedSwan/buildflow) (⭐ 291)
+- [@alohays](https://github.com/alohays) — [awesome-visual-representation-learning-with-transformers](https://github.com/alohays/awesome-visual-representation-learning-with-transformers) (⭐ 268)
 - [@jcwleo](https://github.com/jcwleo) — [random-network-distillation-pytorch](https://github.com/jcwleo/random-network-distillation-pytorch) (⭐ 261)
 - [@emgeee](https://github.com/emgeee) — [mean-tutorial](https://github.com/emgeee/mean-tutorial) (⭐ 200)
-- [@shaun0927](https://github.com/shaun0927) — [openchrome](https://github.com/shaun0927/openchrome) (⭐ 183)
-- [@anduinnn](https://github.com/anduinnn) — [HiFiNi-Auto-CheckIn](https://github.com/anduinnn/HiFiNi-Auto-CheckIn) (⭐ 170)
-- [@MeroZemory](https://github.com/MeroZemory) — [ida-multi-mcp](https://github.com/MeroZemory/ida-multi-mcp) (⭐ 166)
+- [@shaun0927](https://github.com/shaun0927) — [openchrome](https://github.com/shaun0927/openchrome) (⭐ 186)
+- [@MeroZemory](https://github.com/MeroZemory) — [ida-multi-mcp](https://github.com/MeroZemory/ida-multi-mcp) (⭐ 182)
+- [@anduinnn](https://github.com/anduinnn) — [HiFiNi-Auto-CheckIn](https://github.com/anduinnn/HiFiNi-Auto-CheckIn) (⭐ 171)
+- [@HaD0Yun](https://github.com/HaD0Yun) — [Gopeak-godot-mcp](https://github.com/HaD0Yun/Gopeak-godot-mcp) (⭐ 148)
 - [@Znuff](https://github.com/Znuff) — [consolas-powerline](https://github.com/Znuff/consolas-powerline) (⭐ 146)
-- [@HaD0Yun](https://github.com/HaD0Yun) — [Gopeak-godot-mcp](https://github.com/HaD0Yun/Gopeak-godot-mcp) (⭐ 143)
 
 <!-- OMC:FEATURED-CONTRIBUTORS:END -->
 

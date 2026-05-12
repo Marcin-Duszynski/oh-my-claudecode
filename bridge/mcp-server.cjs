@@ -21054,6 +21054,66 @@ function validateWorkingDirectory(workingDirectory) {
   }
   return trustedRoot;
 }
+function getGitCommonDir(cwd) {
+  try {
+    const commonDir = (0, import_child_process8.execSync)("git rev-parse --path-format=absolute --git-common-dir", {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5e3
+    }).trim();
+    return (0, import_fs10.realpathSync)(commonDir);
+  } catch {
+    return null;
+  }
+}
+function validateWorkingDirectoryOrLinkedWorktree(workingDirectory) {
+  const trustedRoot = getWorktreeRoot(process.cwd()) || process.cwd();
+  if (!workingDirectory) {
+    return trustedRoot;
+  }
+  const resolved = (0, import_path11.resolve)(workingDirectory);
+  let trustedRootReal;
+  try {
+    trustedRootReal = (0, import_fs10.realpathSync)(trustedRoot);
+  } catch {
+    trustedRootReal = trustedRoot;
+  }
+  const providedRoot = getWorktreeRoot(resolved);
+  if (providedRoot) {
+    let providedRootReal;
+    try {
+      providedRootReal = (0, import_fs10.realpathSync)(providedRoot);
+    } catch {
+      throw new Error(`workingDirectory '${workingDirectory}' does not exist or is not accessible.`);
+    }
+    if (providedRootReal === trustedRootReal) {
+      return providedRoot;
+    }
+    const trustedCommonDir = getGitCommonDir(trustedRoot);
+    const providedCommonDir = getGitCommonDir(providedRoot);
+    if (trustedCommonDir && providedCommonDir && providedCommonDir === trustedCommonDir) {
+      return providedRoot;
+    }
+    console.error("[worktree] workingDirectory resolved to different git worktree root, using trusted root", {
+      workingDirectory: resolved,
+      providedRoot: providedRootReal,
+      trustedRoot: trustedRootReal
+    });
+    return trustedRoot;
+  }
+  let resolvedReal;
+  try {
+    resolvedReal = (0, import_fs10.realpathSync)(resolved);
+  } catch {
+    throw new Error(`workingDirectory '${workingDirectory}' does not exist or is not accessible.`);
+  }
+  const rel = (0, import_path11.relative)(trustedRootReal, resolvedReal);
+  if (rel.startsWith("..") || (0, import_path11.isAbsolute)(rel)) {
+    throw new Error(`workingDirectory '${workingDirectory}' is outside the trusted worktree root '${trustedRoot}'.`);
+  }
+  return trustedRoot;
+}
 
 // src/tools/ast-tools.ts
 var import_meta2 = {};
@@ -22515,6 +22575,9 @@ function resolveStateRoot(directory) {
   const baseDir = directory || process.cwd();
   return getWorktreeRoot(baseDir) || baseDir;
 }
+function hasSessionEndSummary(baseDir, sessionId) {
+  return (0, import_fs12.existsSync)((0, import_path13.join)(getOmcRoot(baseDir), "sessions", `${sessionId}.json`));
+}
 function findSessionOwnedStateFiles(mode, sessionId, directory) {
   const matches = /* @__PURE__ */ new Set();
   const baseDir = resolveStateRoot(directory);
@@ -22530,6 +22593,30 @@ function findSessionOwnedStateFiles(mode, sessionId, directory) {
     try {
       const raw = JSON.parse((0, import_fs12.readFileSync)(candidatePath, "utf-8"));
       if (getStateSessionOwner(raw) === sessionId) {
+        matches.add(candidatePath);
+      }
+    } catch {
+    }
+  }
+  return [...matches];
+}
+function findCompletedSessionStateFiles(mode, directory, requesterSessionId) {
+  const matches = /* @__PURE__ */ new Set();
+  const baseDir = resolveStateRoot(directory);
+  for (const sid of listSessionIds(baseDir)) {
+    if (requesterSessionId && sid === requesterSessionId) {
+      continue;
+    }
+    if (!hasSessionEndSummary(baseDir, sid)) {
+      continue;
+    }
+    const candidatePath = resolveSessionStatePath(mode, sid, baseDir);
+    if (!(0, import_fs12.existsSync)(candidatePath)) {
+      continue;
+    }
+    try {
+      const raw = JSON.parse((0, import_fs12.readFileSync)(candidatePath, "utf-8"));
+      if (raw.active === true) {
         matches.add(candidatePath);
       }
     } catch {
@@ -22972,6 +23059,55 @@ function clearSessionOwnedStateCandidates(mode, root, sessionId) {
   }
   return { cleared, hadFailure, paths };
 }
+function clearCompletedSessionStateCandidates(mode, root, requesterSessionId) {
+  let cleared = 0;
+  let hadFailure = false;
+  const paths = findCompletedSessionStateFiles(mode, root, requesterSessionId);
+  for (const statePath of paths) {
+    try {
+      (0, import_fs14.unlinkSync)(statePath);
+      cleared++;
+    } catch {
+      hadFailure = true;
+    }
+  }
+  return { cleared, hadFailure, paths };
+}
+function getModeRuntimeArtifactNames(mode) {
+  return [
+    `${mode}-stop-breaker.json`,
+    `${mode}-last-steer-at`,
+    `${mode}-continue-steer.lock`
+  ];
+}
+function clearModeRuntimeArtifacts(mode, root, sessionId) {
+  let cleared = 0;
+  let hadFailure = false;
+  const stateRoot = (0, import_path15.join)(getOmcRoot(root), "state");
+  const candidateDirs = /* @__PURE__ */ new Set([stateRoot]);
+  if (sessionId) {
+    candidateDirs.add((0, import_path15.join)(stateRoot, "sessions", sessionId));
+  } else {
+    for (const sid of listSessionIds(root)) {
+      candidateDirs.add((0, import_path15.join)(stateRoot, "sessions", sid));
+    }
+  }
+  for (const dir of candidateDirs) {
+    for (const artifactName of getModeRuntimeArtifactNames(mode)) {
+      const artifactPath = (0, import_path15.join)(dir, artifactName);
+      if (!(0, import_fs14.existsSync)(artifactPath)) {
+        continue;
+      }
+      try {
+        (0, import_fs14.unlinkSync)(artifactPath);
+        cleared++;
+      } catch {
+        hadFailure = true;
+      }
+    }
+  }
+  return { cleared, hadFailure };
+}
 function writeSessionCancelSignal(root, sessionId, mode) {
   const now = Date.now();
   const cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, root);
@@ -23020,6 +23156,30 @@ var stateReadTool = {
         validateSessionId(sessionId);
         const statePath2 = MODE_CONFIGS[mode] ? getStateFilePath(root, mode, sessionId) : resolveSessionStatePath(mode, sessionId, root);
         if (!(0, import_fs14.existsSync)(statePath2)) {
+          const completedSessionPaths = findCompletedSessionStateFiles(mode, root, sessionId);
+          if (completedSessionPaths.length > 0) {
+            const orphanList = completedSessionPaths.map((orphanPath) => {
+              const sessionMarker = `${(0, import_path15.join)("state", "sessions")}/`;
+              const markerIndex = orphanPath.indexOf(sessionMarker);
+              if (markerIndex === -1) return `- ${orphanPath}`;
+              const rest = orphanPath.slice(markerIndex + sessionMarker.length);
+              const orphanSessionId = rest.split(/[\\/]/)[0] || "unknown";
+              return `- session: ${orphanSessionId}
+  path: ${orphanPath}`;
+            }).join("\n");
+            return {
+              content: [{
+                type: "text",
+                text: `No state found for mode: ${mode} in session: ${sessionId}
+Expected path: ${statePath2}
+
+Discovered ${completedSessionPaths.length} completed-session orphan state file${completedSessionPaths.length === 1 ? "" : "s"} for this mode:
+${orphanList}
+
+Run state_clear(mode="${mode}", session_id="${sessionId}") to clear the current session plus these completed-session orphan files.`
+              }]
+            };
+          }
           return {
             content: [{
               type: "text",
@@ -23270,6 +23430,13 @@ var stateClearTool = {
         for (const teamStatePath of findSessionOwnedStateFiles("team", sessionId, root)) {
           collectTeamNamesForCleanup(teamStatePath);
         }
+        if (mode === "team") {
+          for (const teamStatePath of findCompletedSessionStateFiles("team", root, sessionId)) {
+            collectTeamNamesForCleanup(teamStatePath);
+          }
+        }
+        const completedSessionCleanup = clearCompletedSessionStateCandidates(mode, root, sessionId);
+        const runtimeCleanup2 = clearModeRuntimeArtifacts(mode, root, sessionId);
         writeSessionCancelSignal(root, sessionId, mode);
         if (MODE_CONFIGS[mode]) {
           const success = clearModeState(mode, root, sessionId);
@@ -23278,7 +23445,7 @@ var stateClearTool = {
           let ownerSessionId2;
           let ownerSessionCleanup2 = { cleared: 0, hadFailure: false, paths: [] };
           let ownerLegacyCleanup2 = { cleared: 0, hadFailure: false };
-          if (requestedSessionOwnedPaths.length === 0 && sessionCleanup2.cleared === 0 && legacyCleanup2.cleared === 0) {
+          if (requestedSessionOwnedPaths.length === 0 && completedSessionCleanup.cleared === 0 && sessionCleanup2.cleared === 0 && legacyCleanup2.cleared === 0) {
             ownerSessionId2 = findSingleOwningSessionForMode(mode, root, sessionId);
             if (ownerSessionId2) {
               if (mode === "team") {
@@ -23287,6 +23454,9 @@ var stateClearTool = {
                 }
               }
               writeSessionCancelSignal(root, ownerSessionId2, mode);
+              const ownerRuntimeCleanup = clearModeRuntimeArtifacts(mode, root, ownerSessionId2);
+              runtimeCleanup2.cleared += ownerRuntimeCleanup.cleared;
+              runtimeCleanup2.hadFailure ||= ownerRuntimeCleanup.hadFailure;
               clearModeState(mode, root, ownerSessionId2);
               ownerSessionCleanup2 = clearSessionOwnedStateCandidates(mode, root, ownerSessionId2);
               ownerLegacyCleanup2 = clearLegacyStateCandidates(mode, root, ownerSessionId2);
@@ -23296,8 +23466,14 @@ var stateClearTool = {
           if (legacyCleanup2.cleared > 0) {
             ghostNoteParts2.push("ghost legacy file also removed");
           }
+          if (completedSessionCleanup.cleared > 0) {
+            ghostNoteParts2.push(`removed ${completedSessionCleanup.cleared} completed-session orphan file${completedSessionCleanup.cleared === 1 ? "" : "s"}`);
+          }
           if (sessionCleanup2.cleared > 0) {
             ghostNoteParts2.push(`removed ${sessionCleanup2.cleared} recovered session file${sessionCleanup2.cleared === 1 ? "" : "s"}`);
+          }
+          if (runtimeCleanup2.cleared > 0) {
+            ghostNoteParts2.push(`removed ${runtimeCleanup2.cleared} runtime artifact${runtimeCleanup2.cleared === 1 ? "" : "s"}`);
           }
           if (ownerSessionId2) {
             ghostNoteParts2.push(`cleared owning session: ${ownerSessionId2}`);
@@ -23313,7 +23489,7 @@ var stateClearTool = {
             if (prunedMissions > 0) details.push(`pruned ${prunedMissions} HUD mission entry(ies)`);
             return details.length > 0 ? ` (${details.join(", ")})` : "";
           })();
-          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure && !ownerSessionCleanup2.hadFailure && !ownerLegacyCleanup2.hadFailure) {
+          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure && !completedSessionCleanup.hadFailure && !ownerSessionCleanup2.hadFailure && !ownerLegacyCleanup2.hadFailure && !runtimeCleanup2.hadFailure) {
             return {
               content: [{
                 type: "text",
@@ -23334,7 +23510,7 @@ var stateClearTool = {
         let ownerSessionId;
         let ownerSessionCleanup = { cleared: 0, hadFailure: false, paths: [] };
         let ownerLegacyCleanup = { cleared: 0, hadFailure: false };
-        if (requestedSessionOwnedPaths.length === 0 && sessionCleanup.cleared === 0 && legacyCleanup.cleared === 0) {
+        if (requestedSessionOwnedPaths.length === 0 && completedSessionCleanup.cleared === 0 && sessionCleanup.cleared === 0 && legacyCleanup.cleared === 0) {
           ownerSessionId = findSingleOwningSessionForMode(mode, root, sessionId);
           if (ownerSessionId) {
             if (mode === "team") {
@@ -23343,6 +23519,9 @@ var stateClearTool = {
               }
             }
             writeSessionCancelSignal(root, ownerSessionId, mode);
+            const ownerRuntimeCleanup = clearModeRuntimeArtifacts(mode, root, ownerSessionId);
+            runtimeCleanup2.cleared += ownerRuntimeCleanup.cleared;
+            runtimeCleanup2.hadFailure ||= ownerRuntimeCleanup.hadFailure;
             ownerSessionCleanup = clearSessionOwnedStateCandidates(mode, root, ownerSessionId);
             ownerLegacyCleanup = clearLegacyStateCandidates(mode, root, ownerSessionId);
           }
@@ -23351,8 +23530,14 @@ var stateClearTool = {
         if (legacyCleanup.cleared > 0) {
           ghostNoteParts.push("ghost legacy file also removed");
         }
+        if (completedSessionCleanup.cleared > 0) {
+          ghostNoteParts.push(`removed ${completedSessionCleanup.cleared} completed-session orphan file${completedSessionCleanup.cleared === 1 ? "" : "s"}`);
+        }
         if (sessionCleanup.cleared > 0) {
           ghostNoteParts.push(`removed ${sessionCleanup.cleared} recovered session file${sessionCleanup.cleared === 1 ? "" : "s"}`);
+        }
+        if (runtimeCleanup2.cleared > 0) {
+          ghostNoteParts.push(`removed ${runtimeCleanup2.cleared} runtime artifact${runtimeCleanup2.cleared === 1 ? "" : "s"}`);
         }
         if (ownerSessionId) {
           ghostNoteParts.push(`cleared owning session: ${ownerSessionId}`);
@@ -23371,7 +23556,7 @@ var stateClearTool = {
         return {
           content: [{
             type: "text",
-            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure || ownerSessionCleanup.hadFailure || ownerLegacyCleanup.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
+            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure || completedSessionCleanup.hadFailure || ownerSessionCleanup.hadFailure || ownerLegacyCleanup.hadFailure || runtimeCleanup2.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
           }]
         };
       }
@@ -23397,6 +23582,7 @@ var stateClearTool = {
           }
         }
       }
+      const runtimeCleanup = clearModeRuntimeArtifacts(mode, root);
       let clearedCount = 0;
       const errors = [];
       if (mode === "team") {
@@ -23416,6 +23602,10 @@ var stateClearTool = {
       clearedCount += extraLegacyCleanup.cleared;
       if (extraLegacyCleanup.hadFailure) {
         errors.push("legacy path");
+      }
+      clearedCount += runtimeCleanup.cleared;
+      if (runtimeCleanup.hadFailure) {
+        errors.push("runtime artifacts");
       }
       const sessionIds = listSessionIds(root);
       for (const sid of sessionIds) {
@@ -27352,7 +27542,7 @@ var wikiIngestTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const result = ingestKnowledge(root, {
         title: args.title,
         content: args.content,
@@ -27393,7 +27583,7 @@ var wikiQueryTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const matches = queryWiki(root, args.query, {
         tags: args.tags,
         category: args.category,
@@ -27442,7 +27632,7 @@ var wikiLintTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const report = lintWiki(root);
       if (report.issues.length === 0) {
         return {
@@ -27490,7 +27680,7 @@ var wikiAddTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const slug = titleToSlug(args.title);
       if (readPage(root, slug)) {
         return {
@@ -27533,7 +27723,7 @@ var wikiListTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const index = readIndex(root);
       if (!index) {
         const pages = listPages(root);
@@ -27579,7 +27769,7 @@ var wikiReadTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const filename = args.page.endsWith(".md") ? args.page : `${args.page}.md`;
       const page = readPage(root, filename);
       if (!page) {
@@ -27627,7 +27817,7 @@ var wikiDeleteTool = {
   },
   handler: async (args) => {
     try {
-      const root = validateWorkingDirectory(args.workingDirectory);
+      const root = validateWorkingDirectoryOrLinkedWorktree(args.workingDirectory);
       const filename = args.page.endsWith(".md") ? args.page : `${args.page}.md`;
       const deleted = deletePage(root, filename);
       if (!deleted) {
@@ -27861,6 +28051,15 @@ function parseYamlMetadata(yamlContent) {
       case "sessionId":
         metadata.sessionId = parseStringValue(rawValue);
         break;
+      case "model":
+        metadata.model = parseStringValue(rawValue);
+        break;
+      case "agent":
+        metadata.agent = parseStringValue(rawValue);
+        break;
+      case "matching":
+        metadata.matching = parseStringValue(rawValue);
+        break;
       case "quality":
         metadata.quality = parseInt(rawValue, 10) || void 0;
         break;
@@ -27871,9 +28070,9 @@ function parseYamlMetadata(yamlContent) {
       case "tags": {
         const { value, consumed } = parseArrayValue(rawValue, lines, i);
         if (key === "triggers") {
-          metadata.triggers = Array.isArray(value) ? value : [value];
+          metadata.triggers = normalizeStringArray(value);
         } else {
-          metadata.tags = Array.isArray(value) ? value : [value];
+          metadata.tags = normalizeStringArray(value);
         }
         i += consumed - 1;
         break;
@@ -27889,6 +28088,10 @@ function parseStringValue(value) {
     return value.slice(1, -1);
   }
   return value;
+}
+function normalizeStringArray(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values.map((item) => item.trim()).filter(Boolean);
 }
 function parseArrayValue(rawValue, lines, currentIndex) {
   if (rawValue.startsWith("[")) {

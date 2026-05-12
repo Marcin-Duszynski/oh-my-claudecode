@@ -12,7 +12,7 @@ Complete reference for oh-my-claudecode. For quick start, see the main [README.m
 - [CLI Commands: ask/team/session](#cli-commands-askteamsession)
 - [Legacy MCP Team Runtime Tools (Deprecated)](#legacy-mcp-team-runtime-tools-deprecated)
 - [Agents (29 Total)](#agents-29-total)
-- [Skills (35 Total)](#skills-35-total)
+- [Skills (36 Total)](#skills-36-total)
 - [Slash Commands](#slash-commands)
 - [Hooks System](#hooks-system)
 - [Magic Keywords](#magic-keywords)
@@ -522,9 +522,9 @@ Always use `oh-my-claudecode:` prefix when calling via Task tool.
 
 ---
 
-## Skills (35 Total)
+## Skills (36 Total)
 
-Includes **34 canonical skills + 1 deprecated alias** (`psm`). Runtime truth comes from the builtin skill loader scanning `skills/*/SKILL.md` and expanding aliases declared in frontmatter.
+Includes **34 canonical skills + 2 deprecated aliases** (`learner`, `psm`). Runtime truth comes from the builtin skill loader scanning `skills/*/SKILL.md` and expanding aliases declared in frontmatter.
 
 | Skill                     | Description                                                      | Manual Command                              |
 | ------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
@@ -540,17 +540,18 @@ Includes **34 canonical skills + 1 deprecated alias** (`psm`). Runtime truth com
 | `deepinit`                | Generate hierarchical AGENTS.md docs                             | `/oh-my-claudecode:deepinit`                |
 | `external-context`        | Parallel document-specialist research                            | `/oh-my-claudecode:external-context`        |
 | `hud`                     | Configure HUD/statusline                                         | `/oh-my-claudecode:hud`                     |
-| `learner`                 | Extract reusable skill from session                              | `/oh-my-claudecode:learner`                 |
+| `skillify`                | Extract reusable skill from session                              | `/oh-my-claudecode:skillify`                |
+| `learner`                 | **Deprecated** compatibility alias for `skillify`                | `/oh-my-claudecode:learner`                 |
 | `mcp-setup`               | Configure MCP servers                                            | `/oh-my-claudecode:mcp-setup`               |
 | `omc-doctor`              | Diagnose and fix installation issues                             | `/oh-my-claudecode:omc-doctor`              |
-| `omc-plan`                | Planning workflow (`/plan` safe alias)                           | `/oh-my-claudecode:omc-plan`                |
+| `omc-plan`                | Planning workflow (`/plan` safe alias; bundled directory ID is `plan`) | `/oh-my-claudecode:plan`                    |
 | `omc-reference`           | Detailed OMC agent/tools/team/commit reference skill             | Auto-loaded reference only                  |
 | `omc-setup`               | One-time setup wizard                                            | `/oh-my-claudecode:omc-setup`               |
 | `omc-teams`               | Spawn `claude`/`codex`/`gemini` tmux workers for parallel execution | `/oh-my-claudecode:omc-teams`             |
 | `project-session-manager` | Manage isolated dev environments (git worktrees + tmux)          | `/oh-my-claudecode:project-session-manager` |
 | `psm` | **Deprecated** compatibility alias for `project-session-manager` | `/oh-my-claudecode:psm` |
 | `ralph`                   | Persistence loop until verified completion                       | `/oh-my-claudecode:ralph`                   |
-| `ralplan`                 | Consensus planning alias for `/omc-plan --consensus`             | `/oh-my-claudecode:ralplan`                 |
+| `ralplan`                 | Consensus planning alias for `/plan --consensus`                 | `/oh-my-claudecode:ralplan`                 |
 | `release`                 | Automated release workflow                                       | `/oh-my-claudecode:release`                 |
 | `self-improve`            | Autonomous evolutionary code improvement engine with tournament selection; artifacts are topic-scoped under `.omc/self-improve/topics/<topic-slug>/` by default, with flat `.omc/self-improve/` preserved for legacy single-track resumes | `/oh-my-claudecode:self-improve`    |
 | `setup`                   | Unified setup entrypoint for install, diagnostics, and MCP configuration | `/oh-my-claudecode:setup`              |
@@ -582,7 +583,7 @@ Each installed skill is exposed as `/oh-my-claudecode:<skill-name>`. The skills 
 | `/oh-my-claudecode:deepinit [path]`             | Index codebase with hierarchical AGENTS.md files                                           |
 | `/oh-my-claudecode:mcp-setup`                   | Configure MCP servers                                                                      |
 | `/oh-my-claudecode:omc-doctor`                  | Diagnose and fix installation issues                                                       |
-| `/oh-my-claudecode:omc-plan <description>`      | Start planning session (supports consensus structured deliberation)                        |
+| `/oh-my-claudecode:plan <description>`          | Start planning session (supports consensus structured deliberation)                        |
 | `/oh-my-claudecode:omc-setup`                   | One-time setup wizard                                                                      |
 | `/oh-my-claudecode:omc-teams <N>:<agent> <task>`       | Spawn `claude`/`codex`/`gemini` tmux workers for legacy parallel execution                |
 | `/oh-my-claudecode:project-session-manager <arguments>` | Manage isolated dev environments with git worktrees + tmux                         |
@@ -603,8 +604,8 @@ Each installed skill is exposed as `/oh-my-claudecode:<skill-name>`. The skills 
 Built-in skills and slash-loaded skills can now declare a lightweight pipeline/handoff contract in frontmatter:
 
 ```yaml
-pipeline: [deep-interview, omc-plan, autopilot]
-next-skill: omc-plan
+pipeline: [deep-interview, plan, autopilot]
+next-skill: plan
 next-skill-args: --consensus --direct
 handoff: .omc/specs/deep-interview-{slug}.md
 ```
@@ -905,12 +906,29 @@ Configure HUD elements in `~/.claude/settings.json`:
 | `autopilot`  | Show autopilot status                                                                             | `true`  |
 | `showTokens` | Show transcript-derived token usage (`tok:i1.2k/o340`, plus `r...` reasoning and `s...` session total when reliable) | `false` |
 
-Additional `omcHud` layout options (top-level):
+Additional `omcHud` layout and label options (top-level):
 
 | Option     | Description                                                                       | Default    |
 | ---------- | --------------------------------------------------------------------------------- | ---------- |
 | `maxWidth` | Maximum HUD line width (terminal columns)                                         | unset      |
 | `wrapMode` | `truncate` (ellipsis) or `wrap` (break at `\|` boundaries) when `maxWidth` is set | `truncate` |
+| `locale`   | HUD label preset. Supported values: `en`, `zh-CN`                                 | `en`       |
+| `labels`   | Per-label HUD text overrides; supported keys only                                 | unset      |
+
+`locale` and `labels` affect only HUD labels. English remains the default, unsupported locale values and unknown label keys are ignored, and explicit `labels` override the locale preset. Supported label keys are `context`, `tokens`, `tool`, `agent`, `skill`, `ralph`, `background`, `thinking`, `staged`, `modified`, `untracked`, `ahead`, and `behind`.
+
+Example:
+
+```json
+{
+  "omcHud": {
+    "locale": "zh-CN",
+    "labels": {
+      "context": "CTX"
+    }
+  }
+}
+```
 
 Available presets: `minimal`, `focused`, `full`, `dense`, `analytics`, `opencode`
 

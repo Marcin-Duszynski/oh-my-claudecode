@@ -3,7 +3,7 @@
  *
  * Composes statusline output from render context.
  */
-import { DEFAULT_HUD_CONFIG, DEFAULT_ELEMENT_ORDER } from "./types.js";
+import { DEFAULT_HUD_CONFIG, DEFAULT_ELEMENT_ORDER, DEFAULT_HUD_LABELS } from "./types.js";
 import { bold, dim } from "./colors.js";
 import { stringWidth, getCharWidth } from "../utils/string-width.js";
 import { renderRalph } from "./elements/ralph.js";
@@ -183,6 +183,7 @@ export function limitOutputLines(lines, maxLines) {
  */
 export async function render(context, config) {
     const { elements: enabledElements } = config;
+    const hudLabels = config.labels ?? DEFAULT_HUD_LABELS;
     // ── Render all elements into maps ──────────────────────────────────
     // Each element is rendered independently and stored by name.
     // The layout (or DEFAULT_ELEMENT_ORDER) determines final ordering.
@@ -210,7 +211,7 @@ export async function render(context, config) {
             rendered.set("gitBranch", gitBranchElement);
     }
     if (enabledElements.gitStatus) {
-        const gitStatusElement = renderGitStatus(context.cwd);
+        const gitStatusElement = renderGitStatus(context.cwd, hudLabels);
         if (gitStatusElement)
             rendered.set("gitStatus", gitStatusElement);
     }
@@ -237,11 +238,20 @@ export async function render(context, config) {
             rendered.set("omcLabel", bold(`[OMC${versionTag}]`));
         }
     }
+    // Determine effective enterprise mode before rendering limits: only real
+    // enterprise accounts replace token-window limits with enterprise cost.
+    const isEnterprise = enabledElements.enterpriseMode !== undefined
+        ? enabledElements.enterpriseMode
+        : ((context.subscriptionType ?? '').toLowerCase() === 'enterprise' ||
+            /claude_zero/i.test(context.rateLimitTier ?? ''));
     // Rate limits (5h and weekly) - data takes priority over error indicator.
-    // Skip for enterprise responses where token-window limits aren't applicable
-    // (the enterpriseCost element replaces this slot for those accounts).
-    const hasEnterpriseData = context.rateLimitsResult?.rateLimits?.enterpriseSpentUsd !== undefined;
-    if (enabledElements.rateLimits && context.rateLimitsResult && !hasEnterpriseData) {
+    // Enterprise cost data only replaces token-window limits for accounts that
+    // are actually enterprise/claude_zero. Anthropic may include zero-dollar
+    // enterprise fields for non-enterprise paid plans; those must still show
+    // normal 5h/wk limits.
+    const enterpriseCostReplacesRateLimits = isEnterprise &&
+        context.rateLimitsResult?.rateLimits?.enterpriseSpentUsd !== undefined;
+    if (enabledElements.rateLimits && context.rateLimitsResult && !enterpriseCostReplacesRateLimits) {
         if (context.rateLimitsResult.rateLimits) {
             const stale = context.rateLimitsResult.stale;
             const limits = enabledElements.useBars
@@ -268,7 +278,7 @@ export async function render(context, config) {
             rendered.set("permission", permission);
     }
     if (enabledElements.thinking && context.thinkingState) {
-        const thinking = renderThinking(context.thinkingState, enabledElements.thinkingFormat);
+        const thinking = renderThinking(context.thinkingState, enabledElements.thinkingFormat, hudLabels);
         if (thinking)
             rendered.set("thinking", thinking);
     }
@@ -285,11 +295,6 @@ export async function render(context, config) {
                 rendered.set("session", session);
         }
     }
-    // Determine effective enterprise mode
-    const isEnterprise = enabledElements.enterpriseMode !== undefined
-        ? enabledElements.enterpriseMode
-        : ((context.subscriptionType ?? '').toLowerCase() === 'enterprise' ||
-            /claude_zero/i.test(context.rateLimitTier ?? ''));
     if (isEnterprise && enabledElements.showEnterpriseCost !== false) {
         const stale = context.rateLimitsResult?.stale;
         const cost = renderEnterpriseCost(context.rateLimitsResult?.rateLimits, stale);
@@ -298,18 +303,18 @@ export async function render(context, config) {
         }
         else if (enabledElements.showTokens === true) {
             // Enterprise but no cost data — fall back to token usage
-            const tokenUsage = renderTokenUsage(context.lastRequestTokenUsage, context.sessionTotalTokens);
+            const tokenUsage = renderTokenUsage(context.lastRequestTokenUsage, context.sessionTotalTokens, hudLabels);
             if (tokenUsage)
                 rendered.set("tokens", tokenUsage);
         }
     }
     else if (enabledElements.showTokens === true) {
-        const tokenUsage = renderTokenUsage(context.lastRequestTokenUsage, context.sessionTotalTokens);
+        const tokenUsage = renderTokenUsage(context.lastRequestTokenUsage, context.sessionTotalTokens, hudLabels);
         if (tokenUsage)
             rendered.set("tokens", tokenUsage);
     }
     if (enabledElements.ralph && context.ralph) {
-        const ralph = renderRalph(context.ralph, config.thresholds);
+        const ralph = renderRalph(context.ralph, config.thresholds, hudLabels);
         if (ralph)
             rendered.set("ralph", ralph);
     }
@@ -335,8 +340,8 @@ export async function render(context, config) {
     }
     if (enabledElements.contextBar) {
         const ctx = enabledElements.useBars
-            ? renderContextWithBar(context.contextPercent, config.thresholds, 10, context.contextDisplayScope)
-            : renderContext(context.contextPercent, config.thresholds, context.contextDisplayScope);
+            ? renderContextWithBar(context.contextPercent, config.thresholds, 10, context.contextDisplayScope, hudLabels)
+            : renderContext(context.contextPercent, config.thresholds, context.contextDisplayScope, hudLabels);
         if (ctx)
             rendered.set("contextBar", ctx);
     }
@@ -359,13 +364,13 @@ export async function render(context, config) {
         }
     }
     if (enabledElements.backgroundTasks) {
-        const bg = renderBackground(context.backgroundTasks);
+        const bg = renderBackground(context.backgroundTasks, hudLabels);
         if (bg)
             rendered.set("background", bg);
     }
     const showCounts = enabledElements.showCallCounts ?? true;
     if (showCounts) {
-        const counts = renderCallCounts(context.toolCallCount, context.agentCallCount, context.skillCallCount, enabledElements.callCountsFormat ?? 'auto');
+        const counts = renderCallCounts(context.toolCallCount, context.agentCallCount, context.skillCallCount, enabledElements.callCountsFormat ?? 'auto', hudLabels);
         if (counts)
             rendered.set("callCounts", counts);
     }

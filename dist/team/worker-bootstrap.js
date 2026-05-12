@@ -2,6 +2,8 @@ import { mkdir, writeFile, appendFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { sanitizePromptContent } from '../agents/prompt-helpers.js';
 import { formatOmcCliInvocation } from '../utils/omc-cli-rendering.js';
+import { sanitizeName } from './tmux-session.js';
+import { validateResolvedPath } from './fs-utils.js';
 const DEFAULT_INSTRUCTION_STATE_ROOT = '.omc/state';
 function buildInstructionPath(...parts) {
     return join(...parts).replaceAll('\\', '/');
@@ -89,7 +91,7 @@ export function generateWorkerOverlay(params) {
     const shutdownAckPath = buildTeamStateInstructionPath(teamName, instructionStateRoot, 'workers', workerName, 'shutdown-ack.json');
     const claimTaskCommand = formatOmcCliInvocation(`team api claim-task --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\",\\"worker\\":\\"${workerName}\\"}" --json`);
     const sendAckCommand = formatOmcCliInvocation(`team api send-message --input "{\\"team_name\\":\\"${teamName}\\",\\"from_worker\\":\\"${workerName}\\",\\"to_worker\\":\\"leader-fixed\\",\\"body\\":\\"ACK: ${workerName} initialized\\"}" --json`);
-    const completeTaskCommand = formatOmcCliInvocation(`team api transition-task-status --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\",\\"from\\":\\"in_progress\\",\\"to\\":\\"completed\\",\\"claim_token\\":\\"<claim_token>\\"}" --json`);
+    const completeTaskCommand = formatOmcCliInvocation(`team api transition-task-status --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\",\\"from\\":\\"in_progress\\",\\"to\\":\\"completed\\",\\"claim_token\\":\\"<claim_token>\\",\\"result\\":\\"Summary: <what changed>\\\\nVerification: <tests/checks run>\\\\nSubagent skip reason: worker protocol forbids nested subagents; completed focused probe in-session\\"}" --json`);
     const failTaskCommand = formatOmcCliInvocation(`team api transition-task-status --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\",\\"from\\":\\"in_progress\\",\\"to\\":\\"failed\\",\\"claim_token\\":\\"<claim_token>\\"}" --json`);
     const readTaskCommand = formatOmcCliInvocation(`team api read-task --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\"}" --json`);
     const releaseClaimCommand = formatOmcCliInvocation(`team api release-task-claim --input "{\\"team_name\\":\\"${teamName}\\",\\"task_id\\":\\"<id>\\",\\"claim_token\\":\\"<claim_token>\\",\\"worker\\":\\"${workerName}\\"}" --json`);
@@ -142,6 +144,11 @@ Use the CLI API for all task lifecycle operations. Do NOT directly edit task fil
 - Complete task: \`${completeTaskCommand}\`
 - Fail task: \`${failTaskCommand}\`
 - Release claim (rollback): \`${releaseClaimCommand}\`
+- Delegation compliance evidence (required for broad delegated tasks):
+  - The completion command MUST include a \`result\` string with summary and verification evidence.
+  - Because worker protocol forbids nested sub-agents, use: \`Subagent skip reason: <why in-session execution was safer/sufficient>\`
+  - Only if the leader explicitly grants an exception to spawn nested help, use: \`Subagent spawn evidence: <count, child task names/thread ids, and integrated findings>\`
+  - Completion is rejected with \`missing_delegation_compliance_evidence\` when required evidence is absent.
 
 ## Canonical Team State Root
 - Resolve the team state root in this order: \`OMC_TEAM_STATE_ROOT\` env -> worker identity \`team_state_root\` -> config/manifest \`team_state_root\` -> ${params.cwd}/.omc/state/team/${teamName}.
@@ -209,9 +216,16 @@ export async function composeInitialInbox(teamName, workerName, content, cwd, cl
 }
 /**
  * Append a message to the worker inbox.
+ *
+ * Sanitizes both `teamName` and `workerName` (mirroring the leader-inbox
+ * pattern) and validates the resolved path stays under `cwd` to prevent
+ * traversal — callers in `merge-orchestrator` may pass un-sanitized names.
  */
 export async function appendToInbox(teamName, workerName, message, cwd) {
-    const inboxPath = join(cwd, `.omc/state/team/${teamName}/workers/${workerName}/inbox.md`);
+    const safeTeam = sanitizeName(teamName);
+    const safeWorker = sanitizeName(workerName);
+    const inboxPath = join(cwd, `.omc/state/team/${safeTeam}/workers/${safeWorker}/inbox.md`);
+    validateResolvedPath(inboxPath, cwd);
     await mkdir(dirname(inboxPath), { recursive: true });
     await appendFile(inboxPath, `\n\n---\n${message}`, 'utf-8');
 }

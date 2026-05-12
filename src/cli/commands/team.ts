@@ -14,7 +14,9 @@ import {
   executeTeamApiOperation,
   type TeamApiOperation,
 } from '../../team/api-interop.js';
+import { inferDelegationPlanForTeamTask } from '../../team/delegation-evidence.js';
 import type { CliAgentType } from '../../team/model-contract.js';
+import type { TeamTaskDelegationPlan } from '../../team/types.js';
 import { loadConfig } from '../../config/loader.js';
 
 const HELP_TOKENS = new Set(['--help', '-h', 'help']);
@@ -24,7 +26,7 @@ const VALID_TEAM_CLI_AGENT_TYPES = new Set(['claude', 'codex', 'gemini']);
 const DEFAULT_TEAM_CLI_AGENT_TYPE: CliAgentType = 'claude';
 
 const TEAM_HELP = `
-Usage: omc team [N:agent-type[:role]] [--new-window] "<task description>"
+Usage: omc team [N:agent-type[:role]] [--new-window] [--auto-merge] "<task description>"
        omc team status <team-name>
        omc team shutdown <team-name> [--force]
        omc team api <operation> [--input <json>] [--json]
@@ -42,8 +44,15 @@ Examples:
 
 Worktrees (opt-in): set team.ops.worktreeMode or OMC_TEAM_WORKTREE_MODE=detached|branch to launch workers from .omc/team/<team>/worktrees/<worker>. Status includes workspace/worktree metadata.
 
+Auto-merge (v2-only):
+  --auto-merge          Enable per-commit auto-merge to leader and auto-rebase fanout.
+                        Each worker runs in a dedicated git worktree on omc-team/{team}/{worker}.
+                        Bursts of rapid worker commits coalesce to a single merge of HEAD.
+                        Requires OMC_RUNTIME_V2=1. Leader branch must not be 'main' or 'master'.
+                        Equivalent to OMC_TEAMS_AUTO_MERGE=1.
+
 Roles (optional): architect, executor, planner, analyst, critic, debugger, verifier,
-  code-reviewer, security-reviewer, test-engineer, debugger, designer, writer, scientist
+  code-reviewer, security-reviewer, test-engineer, designer, writer, scientist
 `;
 
 const TEAM_API_HELP = `
@@ -91,8 +100,8 @@ const TEAM_API_OPERATION_REQUIRED_FIELDS: Record<TeamApiOperation, string[]> = {
 };
 
 const TEAM_API_OPERATION_OPTIONAL_FIELDS: Partial<Record<TeamApiOperation, string[]>> = {
-  'create-task': ['owner', 'blocked_by', 'requires_code_change'],
-  'update-task': ['subject', 'description', 'blocked_by', 'requires_code_change'],
+  'create-task': ['owner', 'blocked_by', 'requires_code_change', 'delegation'],
+  'update-task': ['subject', 'description', 'blocked_by', 'requires_code_change', 'delegation'],
   'claim-task': ['expected_version'],
   'read-shutdown-ack': ['min_updated_at'],
   'write-worker-identity': [
@@ -242,6 +251,7 @@ export interface ParsedTeamArgs {
   teamName: string;
   json: boolean;
   newWindow: boolean;
+  autoMerge: boolean;
 }
 
 interface NormalizedWorkerSpecSegment {
@@ -326,6 +336,7 @@ export function parseTeamArgs(tokens: string[], defaultAgentType: string = 'clau
   let workerSpecs: ParsedWorkerSpec[] = [];
   let json = false;
   let newWindow = false;
+  let autoMerge: boolean = process.env.OMC_TEAMS_AUTO_MERGE === '1';
   const normalizedDefaultAgentType = VALID_TEAM_CLI_AGENT_TYPES.has(defaultAgentType as CliAgentType)
     ? defaultAgentType
     : DEFAULT_TEAM_CLI_AGENT_TYPE;
@@ -337,6 +348,8 @@ export function parseTeamArgs(tokens: string[], defaultAgentType: string = 'clau
       json = true;
     } else if (arg === '--new-window') {
       newWindow = true;
+    } else if (arg === '--auto-merge') {
+      autoMerge = true;
     } else {
       filteredArgs.push(arg);
     }
@@ -408,19 +421,21 @@ export function parseTeamArgs(tokens: string[], defaultAgentType: string = 'clau
   }
 
   const teamName = slugifyTask(task);
-  return { workerCount, agentTypes, workerSpecs, role, task, teamName, json, newWindow };
+  return { workerCount, agentTypes, workerSpecs, role, task, teamName, json, newWindow, autoMerge };
 }
 
-export function buildStartupTasks(parsed: ParsedTeamArgs): Array<{ subject: string; description: string; owner?: string }> {
+export function buildStartupTasks(parsed: ParsedTeamArgs): Array<{ subject: string; description: string; owner?: string; delegation?: TeamTaskDelegationPlan }> {
   return Array.from({ length: parsed.workerCount }, (_, index) => {
     const workerSpec = parsed.workerSpecs[index];
     const roleLabel = workerSpec?.role ? ` (${workerSpec.role})` : '';
+    const delegation = inferDelegationPlanForTeamTask(parsed.task);
     return {
       subject: parsed.workerCount === 1
         ? parsed.task.slice(0, 80)
         : `Worker ${index + 1}${roleLabel}: ${parsed.task}`.slice(0, 80),
       description: parsed.task,
       ...(workerSpec?.role ? { owner: `worker-${index + 1}` } : {}),
+      ...(delegation ? { delegation } : {}),
     };
   });
 }
@@ -564,26 +579,30 @@ async function handleTeamStart(parsed: ParsedTeamArgs, cwd: string): Promise<voi
   );
 
   // Build the task list from decomposition subtasks or fall back to atomic replication
-  const tasks: Array<{ subject: string; description: string; owner?: string }> = [];
+  const tasks: Array<{ subject: string; description: string; owner?: string; delegation?: TeamTaskDelegationPlan }> = [];
   if (decomposition.strategy !== 'atomic' && decomposition.subtasks.length > 1) {
     // Use decomposed subtasks — one per subtask (up to effectiveWorkerCount)
     const subtasks = decomposition.subtasks.slice(0, effectiveWorkerCount);
     for (let i = 0; i < subtasks.length; i++) {
+      const delegation = inferDelegationPlanForTeamTask(subtasks[i].description);
       tasks.push({
         subject: subtasks[i].subject,
         description: subtasks[i].description,
         owner: `worker-${i + 1}`,
+        ...(delegation ? { delegation } : {}),
       });
     }
   } else {
     // Atomic task: replicate across all workers (backward compatible)
     for (let i = 0; i < effectiveWorkerCount; i++) {
+      const delegation = inferDelegationPlanForTeamTask(parsed.task);
       tasks.push({
         subject: effectiveWorkerCount === 1
           ? parsed.task.slice(0, 80)
           : `Worker ${i + 1}: ${parsed.task}`.slice(0, 80),
         description: parsed.task,
         owner: `worker-${i + 1}`,
+        ...(delegation ? { delegation } : {}),
       });
     }
   }
@@ -608,6 +627,7 @@ async function handleTeamStart(parsed: ParsedTeamArgs, cwd: string): Promise<voi
       newWindow: parsed.newWindow,
       workerRoles: parsed.workerSpecs.map((spec) => spec.role ?? spec.agentType),
       ...(rolePrompt ? { roleName: parsed.role, rolePrompt } : {}),
+      ...(parsed.autoMerge ? { autoMerge: true } : {}),
     });
 
     const uniqueTypes = [...new Set(parsed.agentTypes)].join(',');
